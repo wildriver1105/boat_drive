@@ -107,7 +107,7 @@ function drawEntities(ctx, w, h, world) {
   void ctx; void w; void h; void world;
 }
 
-// ---------- Boat ----------
+// ---------- Boat (small sport bowrider, top-down) ----------
 
 function drawBoat(ctx, w, h, boat) {
   const cx = w / 2;
@@ -122,33 +122,157 @@ function drawBoat(ctx, w, h, boat) {
   const half = L / 2;
   const halfW = W / 2;
 
-  // Hull — pointed bow.
-  ctx.beginPath();
-  ctx.moveTo(half, 0);
-  ctx.lineTo(half * 0.4, halfW);
-  ctx.lineTo(-half, halfW * 0.85);
-  ctx.lineTo(-half, -halfW * 0.85);
-  ctx.lineTo(half * 0.4, -halfW);
-  ctx.closePath();
-  ctx.fillStyle = '#f5e8c8';
+  // Soft shadow underneath the hull for depth against the water.
+  ctx.save();
+  ctx.translate(0, 2);
+  hullOutlinePath(ctx, half * 1.01, halfW * 1.04);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
   ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#5a4423';
+  ctx.restore();
+
+  // 1) Outboard motor — drawn BEFORE the hull so the transom edge sits on top
+  //    of the mount, and so the cowling extends behind the boat cleanly.
+  drawOutboardMotor(ctx, half, boat.rudder);
+
+  // 2) Hull — fiberglass white with a side-to-side gradient for shading.
+  hullOutlinePath(ctx, half, halfW);
+  {
+    const grad = ctx.createLinearGradient(0, -halfW, 0, halfW);
+    grad.addColorStop(0, '#dde5ef');
+    grad.addColorStop(0.5, '#ffffff');
+    grad.addColorStop(1, '#c1cbd8');
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#1a2538';
+  ctx.lineWidth = 1.2;
   ctx.stroke();
 
-  // Cabin
-  ctx.beginPath();
-  ctx.rect(-half * 0.2, -halfW * 0.55, half * 0.6, halfW * 1.1);
-  ctx.fillStyle = '#3a6b87';
+  // 3) Boot stripe (navy accent along the hull side).
+  ctx.save();
+  hullOutlinePath(ctx, half, halfW);
+  ctx.clip();
+  hullOutlinePath(ctx, half - 2, halfW - 1.8);
+  ctx.strokeStyle = '#1f4a76';
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  ctx.restore();
+
+  // 4) Cockpit interior (dark navy), inset within the hull.
+  cockpitPath(ctx, half, halfW);
+  ctx.fillStyle = '#1b3552';
   ctx.fill();
-  ctx.strokeStyle = '#1c3b4d';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#0c2034';
+  ctx.lineWidth = 0.8;
   ctx.stroke();
 
-  // Pivot-point marker — the instantaneous lateral center of rotation.
-  // Drawn in body frame so it sits naturally where the hull is rotating about.
-  // Forward of CG during a typical forward turn (≈ 1/3 from bow); aft of CG
-  // during a sternboard turn. Clamped to the visible hull length.
+  // 5) Teak deck planks visible inside the cockpit.
+  ctx.save();
+  cockpitPath(ctx, half, halfW);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(190, 145, 80, 0.22)';
+  ctx.lineWidth = 0.6;
+  for (let i = -4; i <= 4; i++) {
+    const py = i * (halfW * 0.2);
+    ctx.beginPath();
+    ctx.moveTo(-half, py);
+    ctx.lineTo(half, py);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 6) Engine compartment at the stern (covers the back portion of cockpit).
+  ctx.fillStyle = '#0b1828';
+  ctx.strokeStyle = '#04080f';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.92, -halfW * 0.55, half * 0.22, halfW * 1.1, 3);
+  ctx.fill();
+  ctx.stroke();
+  // Engine cover vents
+  ctx.strokeStyle = 'rgba(140, 160, 190, 0.45)';
+  ctx.lineWidth = 0.5;
+  for (let i = -2; i <= 2; i++) {
+    const py = i * 4;
+    ctx.beginPath();
+    ctx.moveTo(-half * 0.86, py);
+    ctx.lineTo(-half * 0.78, py);
+    ctx.stroke();
+  }
+
+  // 7) Rear bench seat (across the cockpit, just forward of the engine).
+  drawBench(ctx, -half * 0.65, halfW * 0.78);
+
+  // 8) Captain (port) and passenger (starboard) seats.
+  drawSeat(ctx, -half * 0.18, -halfW * 0.42, halfW * 0.28);
+  drawSeat(ctx, -half * 0.18,  halfW * 0.42, halfW * 0.28);
+
+  // 9) Helm console in front of the captain seat (small wheel hint).
+  drawHelmConsole(ctx, half, halfW, boat.rudderTarget);
+
+  // 10) Foredeck — the white covered area at the front of the boat.
+  foredeckPath(ctx, half, halfW);
+  {
+    const grad = ctx.createLinearGradient(0, -halfW, 0, halfW);
+    grad.addColorStop(0, '#d6dde7');
+    grad.addColorStop(0.5, '#f7fafd');
+    grad.addColorStop(1, '#c2cbd8');
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+  ctx.strokeStyle = 'rgba(20, 36, 56, 0.55)';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // 11) Bow non-skid pattern (subtle dotted texture on foredeck near tip).
+  ctx.save();
+  foredeckPath(ctx, half, halfW);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(50, 70, 90, 0.18)';
+  for (let i = 0; i < 16; i++) {
+    const px = half * 0.18 + i * (half * 0.05);
+    const py = Math.sin(i * 1.7) * halfW * 0.25;
+    ctx.beginPath();
+    ctx.arc(px, py, 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 12) Anchor locker hatch near the bow tip.
+  ctx.fillStyle = 'rgba(80, 95, 115, 0.7)';
+  ctx.strokeStyle = 'rgba(20, 30, 45, 0.7)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  roundedRect(ctx, half * 0.58, -3.5, 9, 7, 1.5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(190, 200, 215, 0.85)';
+  ctx.fillRect(half * 0.58 + 7.5, -0.6, 1.4, 1.2);
+
+  // 13) Windshield — sits at the foredeck/cockpit boundary.
+  drawWindshield(ctx, half, halfW);
+
+  // 14) Cleats (mooring fittings) at the gunwale corners.
+  drawCleat(ctx, half * 0.45,  halfW * 0.84);
+  drawCleat(ctx, half * 0.45, -halfW * 0.84);
+  drawCleat(ctx, -half * 0.82,  halfW * 0.88);
+  drawCleat(ctx, -half * 0.82, -halfW * 0.88);
+
+  // 15) Navigation lights at the bow (red = port, green = starboard).
+  ctx.beginPath();
+  ctx.arc(half * 0.78, -halfW * 0.55, 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = '#d43030';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 0.4;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(half * 0.78,  halfW * 0.55, 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = '#28b85a';
+  ctx.fill();
+  ctx.stroke();
+
+  // 16) Pivot-point marker — instantaneous lateral center of rotation.
   const pivotX = lateralPivotBodyX(boat);
   if (pivotX != null) {
     const clamped = Math.max(-half, Math.min(half, pivotX * PX_PER_M));
@@ -157,24 +281,257 @@ function drawBoat(ctx, w, h, boat) {
     ctx.strokeStyle = 'rgba(120, 70, 20, 0.9)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.arc(clamped, 0, 4.5, 0, Math.PI * 2);
+    ctx.arc(clamped, 0, 4, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.restore();
   }
 
-  // Rudder indicator at the stern (visual deflection up to ~35°).
-  ctx.save();
-  ctx.translate(-RUDDER_ARM * PX_PER_M, 0);
-  ctx.rotate(boat.rudder * 0.6);
+  ctx.restore();
+}
+
+// ---- Hull / deck path helpers (body frame, +x = bow, +y = starboard) ----
+
+function hullOutlinePath(ctx, half, halfW) {
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(-14, 0);
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#222';
+  ctx.moveTo(half, 0); // bow tip
+  // Starboard side: tip → bow flare → max beam → stern shoulder → transom
+  ctx.bezierCurveTo(
+    half * 0.93, halfW * 0.32,
+    half * 0.62, halfW * 0.88,
+    half * 0.30, halfW * 0.97
+  );
+  ctx.quadraticCurveTo(
+    -half * 0.30, halfW * 1.02,
+    -half * 0.78, halfW * 0.94
+  );
+  ctx.quadraticCurveTo(
+    -half * 0.97, halfW * 0.86,
+    -half, halfW * 0.68
+  );
+  // Transom
+  ctx.lineTo(-half, -halfW * 0.68);
+  // Port side mirror
+  ctx.quadraticCurveTo(
+    -half * 0.97, -halfW * 0.86,
+    -half * 0.78, -halfW * 0.94
+  );
+  ctx.quadraticCurveTo(
+    -half * 0.30, -halfW * 1.02,
+    half * 0.30, -halfW * 0.97
+  );
+  ctx.bezierCurveTo(
+    half * 0.62, -halfW * 0.88,
+    half * 0.93, -halfW * 0.32,
+    half, 0
+  );
+  ctx.closePath();
+}
+
+function cockpitPath(ctx, half, halfW) {
+  // Inset rectangle-ish area from just aft of the windshield to just forward
+  // of the transom; rounded corners so it follows the gunwale curve.
+  ctx.beginPath();
+  ctx.moveTo(half * 0.04, halfW * 0.72);
+  ctx.lineTo(-half * 0.72, halfW * 0.80);
+  ctx.quadraticCurveTo(-half * 0.92, halfW * 0.72, -half * 0.93, halfW * 0.55);
+  ctx.lineTo(-half * 0.93, -halfW * 0.55);
+  ctx.quadraticCurveTo(-half * 0.92, -halfW * 0.72, -half * 0.72, -halfW * 0.80);
+  ctx.lineTo(half * 0.04, -halfW * 0.72);
+  ctx.closePath();
+}
+
+function foredeckPath(ctx, half, halfW) {
+  // V-shaped foredeck from the windshield line forward to the bow tip.
+  ctx.beginPath();
+  ctx.moveTo(half - 3, 0);
+  ctx.bezierCurveTo(
+    half * 0.86, halfW * 0.28,
+    half * 0.52, halfW * 0.72,
+    half * 0.18, halfW * 0.80
+  );
+  ctx.lineTo(half * 0.04, halfW * 0.72);
+  ctx.lineTo(half * 0.04, -halfW * 0.72);
+  ctx.lineTo(half * 0.18, -halfW * 0.80);
+  ctx.bezierCurveTo(
+    half * 0.52, -halfW * 0.72,
+    half * 0.86, -halfW * 0.28,
+    half - 3, 0
+  );
+  ctx.closePath();
+}
+
+// ---- Boat detail pieces ----
+
+function drawOutboardMotor(ctx, half, rudderActual) {
+  // The motor pivots on the transom and steers the boat. It rotates with
+  // the actual (smoothed) rudder value — same source as the physics.
+  ctx.save();
+  ctx.translate(-half, 0);
+  ctx.rotate(rudderActual * 0.6); // visual swing up to ~35°
+
+  // Transom bracket (clamps to the hull, sits half over the transom edge).
+  ctx.fillStyle = '#2a3445';
+  ctx.strokeStyle = '#0a0d14';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.rect(-1.5, -3.5, 5, 7);
+  ctx.fill();
+  ctx.stroke();
+
+  // Powerhead cowling (engine housing) hanging aft of the bracket.
+  ctx.beginPath();
+  ctx.ellipse(-11, 0, 7.5, 5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#161d28';
+  ctx.fill();
+  ctx.strokeStyle = '#04070d';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // Brand color stripe along the cowling.
+  ctx.fillStyle = '#d6342e';
+  ctx.fillRect(-17.5, -0.8, 13, 1.5);
+
+  // Air intake panel.
+  ctx.fillStyle = '#3b4554';
+  ctx.beginPath();
+  ctx.ellipse(-9, 0, 2.2, 1.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lower-unit cavitation plate (small horizontal fin under cowling).
+  ctx.fillStyle = '#0c1018';
+  ctx.fillRect(-15, -0.4, 4, 0.8);
+
+  ctx.restore();
+}
+
+function drawSeat(ctx, x, y, size) {
+  // x, y is the seat center. Captain faces +x (forward).
+  ctx.save();
+  ctx.translate(x, y);
+  // Backrest (aft end of the seat)
+  ctx.fillStyle = '#384354';
+  ctx.strokeStyle = '#161e2b';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  roundedRect(ctx, -size * 0.85, -size * 0.5, size * 0.32, size, 1.8);
+  ctx.fill();
+  ctx.stroke();
+  // Cushion
+  ctx.fillStyle = '#5a6878';
+  ctx.beginPath();
+  roundedRect(ctx, -size * 0.55, -size * 0.5, size * 1.05, size, 2);
+  ctx.fill();
+  ctx.stroke();
+  // Cushion seam
+  ctx.strokeStyle = 'rgba(20, 30, 45, 0.5)';
+  ctx.lineWidth = 0.4;
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.2, -size * 0.4);
+  ctx.lineTo(-size * 0.2, size * 0.4);
   ctx.stroke();
   ctx.restore();
+}
 
+function drawBench(ctx, x, y) {
+  // Rear bench seat spanning the width of the cockpit at body-frame x.
+  // y is the starboard edge magnitude; bench goes from -y to +y.
+  ctx.save();
+  ctx.translate(x, 0);
+  // Backrest (slim, aft side)
+  ctx.fillStyle = '#384354';
+  ctx.strokeStyle = '#161e2b';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  roundedRect(ctx, -3.5, -y, 2.5, y * 2, 1);
+  ctx.fill();
+  ctx.stroke();
+  // Cushion (wider)
+  ctx.fillStyle = '#5a6878';
+  ctx.beginPath();
+  roundedRect(ctx, -1, -y * 0.95, 8, y * 1.9, 1.6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHelmConsole(ctx, half, halfW, rudderTarget) {
+  ctx.save();
+  ctx.translate(-half * 0.04, -halfW * 0.42);
+  // Console housing (small dashboard)
+  ctx.fillStyle = '#11192a';
+  ctx.strokeStyle = '#04070f';
+  ctx.lineWidth = 0.7;
+  ctx.beginPath();
+  roundedRect(ctx, -2.5, -halfW * 0.25, 6, halfW * 0.5, 1.5);
+  ctx.fill();
+  ctx.stroke();
+  // Tiny wheel on the console, rotating with the helm.
+  ctx.save();
+  ctx.translate(0.5, 0);
+  ctx.rotate(rudderTarget * HELM_MAX_ANGLE);
+  ctx.beginPath();
+  ctx.arc(0, 0, 2.4, 0, Math.PI * 2);
+  ctx.strokeStyle = '#c8a060';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // Two spokes
+  ctx.beginPath();
+  ctx.moveTo(-2.4, 0); ctx.lineTo(2.4, 0);
+  ctx.moveTo(0, -2.4); ctx.lineTo(0, 2.4);
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawWindshield(ctx, half, halfW) {
+  ctx.save();
+  // Curved frame
+  ctx.beginPath();
+  ctx.moveTo(half * 0.04, -halfW * 0.72);
+  ctx.bezierCurveTo(
+    half * 0.18, -halfW * 0.45,
+    half * 0.18, halfW * 0.45,
+    half * 0.04, halfW * 0.72
+  );
+  ctx.strokeStyle = '#1a2535';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  // Tinted glass
+  ctx.strokeStyle = 'rgba(150, 210, 240, 0.7)';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  // Reflection highlight
+  ctx.beginPath();
+  ctx.moveTo(half * 0.12, -halfW * 0.3);
+  ctx.quadraticCurveTo(half * 0.16, 0, half * 0.12, halfW * 0.05);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCleat(ctx, x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  // Base plate
+  ctx.fillStyle = '#5e6878';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 2.4, 1.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Chrome horn (the T-bar)
+  ctx.fillStyle = '#dadfe6';
+  ctx.strokeStyle = '#2a3340';
+  ctx.lineWidth = 0.4;
+  ctx.beginPath();
+  roundedRect(ctx, -3.2, -0.9, 6.4, 1.8, 0.8);
+  ctx.fill();
+  ctx.stroke();
+  // Bright highlight
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+  ctx.fillRect(-2.6, -0.7, 5.2, 0.4);
   ctx.restore();
 }
 
