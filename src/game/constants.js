@@ -53,12 +53,25 @@ export const RUDDER_ARM = 3.0;
 export const RUDDER_LIFT = 75;
 
 // === Input dynamics ===
-// Throttle is "sticky": while W/S is held, throttleTarget ramps at this rate.
-// On key release, the target STAYS where it was. Only Space snaps to 0.
-export const THROTTLE_RAMP_RATE = 0.6;   // 1/s, full -1↔+1 sweep takes ~3.3s
-export const THROTTLE_RATE = 1.5;        // engine RPM smoothing (target → actual)
-// Rudder is auto-return: target tracks key state directly (no key = center).
+// BOTH throttle and rudder are "sticky": while the key is held the target
+// ramps at the rate below, and on key release the target STAYS where it was.
+// Only Space snaps both back to neutral. Mouse drag on the throttle handle
+// or the helm wheel writes the target directly (and suppresses key ramping
+// for whichever control is being dragged).
+export const THROTTLE_RAMP_RATE = 0.6;
+export const RUDDER_RAMP_RATE = 0.8;
+
+// Engine RPM smoothing — actual throttle eases toward target (target sets
+// the order, engine spools up to that order with this rate).
+export const THROTTLE_RATE = 1.5;
+// Rudder hydraulic / cable transmission — actual rudder eases toward the
+// helm setting at this rate. Small lag for organic feel.
 export const RUDDER_RATE = 3.0;
+
+// Helm geometry: how much the WHEEL rotates for the full ±100% rudder range.
+// Kept below ±π so each rudder value has a unique visible wheel orientation
+// (no ambiguity at the extremes).
+export const HELM_MAX_ANGLE = Math.PI * 0.75; // ±135°
 
 // === Wake ===
 export const WAKE_EMIT_INTERVAL = 0.04;

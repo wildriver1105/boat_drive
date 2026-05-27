@@ -1,18 +1,29 @@
 // Tracks raw key state on window plus mouse/touch dragging on the throttle
-// handle. The physics module reads `getKeys()` each step.
+// handle AND the helm wheel.
 //
-// Throttle can be controlled two ways:
-//   • Keyboard W/S — sticky ramping (handled by physics)
-//   • Mouse drag   — directly sets boat.throttleTarget (handled here)
-// While dragging with the mouse, keyboard throttle adjustment is suppressed
-// (mouseDraggingThrottle flag) so the two inputs don't fight each other.
+// Both throttle and rudder are sticky:
+//   • Throttle: W/S ramp the target; mouse drag on the lever sets it directly.
+//   • Rudder  : A/D ramp the target; mouse drag rotates the helm wheel,
+//               applying its angular delta to the rudder target.
+// While a control is being mouse-dragged, the matching keys are suppressed
+// (mouseDraggingThrottle / mouseDraggingHelm flags).
 
-import { hitTestThrottle, throttleLayout, yToThrottleValue } from './ui-layout.js';
+import {
+  hitTestThrottle,
+  throttleLayout,
+  yToThrottleValue,
+  helmLayout,
+  hitTestHelm,
+} from './ui-layout.js';
+import { HELM_MAX_ANGLE } from './constants.js';
 
 export function createInput({ canvas, world }) {
   const keys = new Set();
   let draggingThrottle = false;
+  let draggingHelm = false;
+  let prevHelmMouseAngle = 0;
   let hoverThrottle = false;
+  let hoverHelm = false;
   let lastCursor = canvas.style.cursor || '';
 
   // ---------- Keyboard ----------
@@ -35,62 +46,87 @@ export function createInput({ canvas, world }) {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
 
-  // ---------- Mouse / touch on throttle handle ----------
+  // ---------- Pointer helpers ----------
 
-  function pointFromMouse(e) {
+  function pointFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      layout: throttleLayout(rect.width, rect.height),
-    };
-  }
-
-  function pointFromTouch(touch) {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top,
-      layout: throttleLayout(rect.width, rect.height),
+      x, y,
+      layoutT: throttleLayout(rect.width, rect.height),
+      layoutH: helmLayout(rect.width, rect.height),
     };
   }
 
   function updateCursor() {
-    const next = draggingThrottle ? 'grabbing' : hoverThrottle ? 'grab' : 'crosshair';
+    let next;
+    if (draggingThrottle || draggingHelm) next = 'grabbing';
+    else if (hoverThrottle || hoverHelm) next = 'grab';
+    else next = 'crosshair';
     if (next !== lastCursor) {
       canvas.style.cursor = next;
       lastCursor = next;
     }
   }
 
+  function clamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+  }
+
+  function applyHelmDrag(x, y, layoutH) {
+    const curAngle = Math.atan2(y - layoutH.cy, x - layoutH.cx);
+    let dAngle = curAngle - prevHelmMouseAngle;
+    // Wrap dAngle to the nearest representative in (-π, π] so a small motion
+    // across the discontinuity isn't read as nearly a full rotation.
+    while (dAngle > Math.PI) dAngle -= 2 * Math.PI;
+    while (dAngle < -Math.PI) dAngle += 2 * Math.PI;
+    prevHelmMouseAngle = curAngle;
+    const rudderDelta = dAngle / HELM_MAX_ANGLE;
+    world.boat.rudderTarget = clamp(world.boat.rudderTarget + rudderDelta, -1, 1);
+  }
+
+  // ---------- Mouse ----------
+
   const onMouseDown = (e) => {
     if (e.button !== 0) return;
-    const { x, y, layout } = pointFromMouse(e);
-    if (hitTestThrottle(x, y, layout)) {
+    const { x, y, layoutT, layoutH } = pointFromClient(e.clientX, e.clientY);
+    if (hitTestThrottle(x, y, layoutT)) {
       draggingThrottle = true;
-      world.boat.throttleTarget = yToThrottleValue(y, layout);
+      world.boat.throttleTarget = yToThrottleValue(y, layoutT);
+      updateCursor();
+      e.preventDefault();
+    } else if (hitTestHelm(x, y, layoutH)) {
+      draggingHelm = true;
+      prevHelmMouseAngle = Math.atan2(y - layoutH.cy, x - layoutH.cx);
       updateCursor();
       e.preventDefault();
     }
   };
   const onMouseMove = (e) => {
-    const { x, y, layout } = pointFromMouse(e);
-    hoverThrottle = hitTestThrottle(x, y, layout);
+    const { x, y, layoutT, layoutH } = pointFromClient(e.clientX, e.clientY);
+    hoverThrottle = !draggingHelm && hitTestThrottle(x, y, layoutT);
+    hoverHelm = !draggingThrottle && hitTestHelm(x, y, layoutH);
     if (draggingThrottle) {
-      world.boat.throttleTarget = yToThrottleValue(y, layout);
+      world.boat.throttleTarget = yToThrottleValue(y, layoutT);
+      e.preventDefault();
+    } else if (draggingHelm) {
+      applyHelmDrag(x, y, layoutH);
       e.preventDefault();
     }
     updateCursor();
   };
   const onMouseUp = (e) => {
-    if (draggingThrottle) {
+    if (draggingThrottle || draggingHelm) {
       draggingThrottle = false;
+      draggingHelm = false;
       updateCursor();
       e.preventDefault();
     }
   };
   const onMouseLeave = () => {
     hoverThrottle = false;
+    hoverHelm = false;
     updateCursor();
   };
 
@@ -99,23 +135,36 @@ export function createInput({ canvas, world }) {
   window.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('mouseleave', onMouseLeave);
 
+  // ---------- Touch ----------
+
   const onTouchStart = (e) => {
     if (e.touches.length === 0) return;
-    const { x, y, layout } = pointFromTouch(e.touches[0]);
-    if (hitTestThrottle(x, y, layout)) {
+    const t = e.touches[0];
+    const { x, y, layoutT, layoutH } = pointFromClient(t.clientX, t.clientY);
+    if (hitTestThrottle(x, y, layoutT)) {
       draggingThrottle = true;
-      world.boat.throttleTarget = yToThrottleValue(y, layout);
+      world.boat.throttleTarget = yToThrottleValue(y, layoutT);
+      e.preventDefault();
+    } else if (hitTestHelm(x, y, layoutH)) {
+      draggingHelm = true;
+      prevHelmMouseAngle = Math.atan2(y - layoutH.cy, x - layoutH.cx);
       e.preventDefault();
     }
   };
   const onTouchMove = (e) => {
-    if (!draggingThrottle || e.touches.length === 0) return;
-    const { y, layout } = pointFromTouch(e.touches[0]);
-    world.boat.throttleTarget = yToThrottleValue(y, layout);
+    if ((!draggingThrottle && !draggingHelm) || e.touches.length === 0) return;
+    const t = e.touches[0];
+    const { x, y, layoutT, layoutH } = pointFromClient(t.clientX, t.clientY);
+    if (draggingThrottle) {
+      world.boat.throttleTarget = yToThrottleValue(y, layoutT);
+    } else if (draggingHelm) {
+      applyHelmDrag(x, y, layoutH);
+    }
     e.preventDefault();
   };
   const onTouchEnd = () => {
     draggingThrottle = false;
+    draggingHelm = false;
   };
   canvas.addEventListener('touchstart', onTouchStart, { passive: false });
   window.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -131,6 +180,7 @@ export function createInput({ canvas, world }) {
         rudderRight: keys.has('KeyD') || keys.has('ArrowRight'),
         neutral: keys.has('Space'),
         mouseDraggingThrottle: draggingThrottle,
+        mouseDraggingHelm: draggingHelm,
       };
     },
     destroy() {

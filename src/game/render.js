@@ -5,9 +5,10 @@ import {
   BOAT_WIDTH,
   WAKE_LIFETIME,
   RUDDER_ARM,
+  HELM_MAX_ANGLE,
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
-import { throttleLayout } from './ui-layout.js';
+import { throttleLayout, helmLayout } from './ui-layout.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
@@ -25,6 +26,7 @@ export function createRenderer(canvas) {
     drawWake(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
     drawBoat(ctx, w, h, world.boat);
+    drawHelm(ctx, w, h, world.boat);
     drawThrottleHandle(ctx, w, h, world.boat);
     drawInfoPanel(ctx, w, h, world.boat);
     drawHints(ctx, w, h);
@@ -172,6 +174,134 @@ function drawBoat(ctx, w, h, boat) {
   ctx.strokeStyle = '#222';
   ctx.stroke();
   ctx.restore();
+
+  ctx.restore();
+}
+
+// ---------- Helm wheel ----------
+
+function drawHelm(ctx, w, h, boat) {
+  const { cx, cy, radius } = helmLayout(w, h);
+  const helmAngle = boat.rudderTarget * HELM_MAX_ANGLE;
+
+  ctx.save();
+
+  // Halo shadow under the wheel.
+  ctx.beginPath();
+  ctx.arc(cx, cy + 4, radius + 22, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+  ctx.fill();
+
+  // Compass band behind the wheel — labels stay still while the wheel rotates.
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 22, 0, Math.PI * 2);
+  const bandGrad = ctx.createRadialGradient(cx, cy, radius + 6, cx, cy, radius + 22);
+  bandGrad.addColorStop(0, 'rgba(8, 22, 32, 0.0)');
+  bandGrad.addColorStop(1, 'rgba(8, 22, 32, 0.55)');
+  ctx.fillStyle = bandGrad;
+  ctx.fill();
+
+  // Fixed reference marker pointing down at the wheel (the "lubber line").
+  ctx.fillStyle = 'rgba(225, 240, 250, 0.9)';
+  ctx.strokeStyle = 'rgba(40, 60, 80, 0.8)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - radius - 6);
+  ctx.lineTo(cx - 6, cy - radius - 18);
+  ctx.lineTo(cx + 6, cy - radius - 18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Rotating wheel parts.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(helmAngle);
+
+  // Outer rim.
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = '#5a4423';
+  ctx.lineWidth = 11;
+  ctx.stroke();
+  // Inner/outer edge highlights for depth.
+  ctx.beginPath();
+  ctx.arc(0, 0, radius + 5, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(20, 12, 4, 0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, radius - 5, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(180, 140, 90, 0.5)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Spokes — 6, with handles extending past the rim.
+  const numSpokes = 6;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < numSpokes; i++) {
+    const a = (i / numSpokes) * Math.PI * 2 - Math.PI / 2; // start at 12 o'clock
+    const isKing = i === 0;
+    ctx.strokeStyle = isKing ? '#a87a32' : '#5a4423';
+    ctx.lineWidth = isKing ? 5.5 : 4.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * (radius + 14), Math.sin(a) * (radius + 14));
+    ctx.stroke();
+  }
+
+  // Spoke handle balls.
+  for (let i = 0; i < numSpokes; i++) {
+    const a = (i / numSpokes) * Math.PI * 2 - Math.PI / 2;
+    const isKing = i === 0;
+    const hx = Math.cos(a) * (radius + 16);
+    const hy = Math.sin(a) * (radius + 16);
+    const hr = isKing ? 8 : 6.5;
+    const g = ctx.createRadialGradient(hx - hr * 0.4, hy - hr * 0.4, 1, hx, hy, hr);
+    g.addColorStop(0, isKing ? '#f0c870' : '#8a6a40');
+    g.addColorStop(1, isKing ? '#7d5a1f' : '#3a2810');
+    ctx.beginPath();
+    ctx.arc(hx, hy, hr, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#1a0e05';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  // Center hub.
+  const hubR = 14;
+  const hubGrad = ctx.createRadialGradient(-3, -3, 1, 0, 0, hubR);
+  hubGrad.addColorStop(0, '#a8825a');
+  hubGrad.addColorStop(1, '#3d2812');
+  ctx.beginPath();
+  ctx.arc(0, 0, hubR, 0, Math.PI * 2);
+  ctx.fillStyle = hubGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#1a0e05';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#d4a747';
+  ctx.fill();
+
+  ctx.restore();
+
+  // Status label below the wheel.
+  ctx.fillStyle = 'rgba(220, 240, 250, 0.75)';
+  ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('HELM', cx, cy + radius + 24);
+
+  const deg = Math.round(boat.rudderTarget * 35); // up to ~35° physical rudder
+  let order;
+  if (Math.abs(deg) < 1) order = 'AMIDSHIPS';
+  else if (deg > 0) order = `STBD  ${deg}°`;
+  else order = `PORT  ${-deg}°`;
+  ctx.fillStyle = '#e6f4fb';
+  ctx.font = '11px monospace';
+  ctx.fillText(order, cx, cy + radius + 40);
 
   ctx.restore();
 }
@@ -359,8 +489,8 @@ function drawInfoPanel(ctx, w, h, boat) {
   let headingDeg = (boat.heading * 180) / Math.PI;
   headingDeg = ((headingDeg % 360) + 360) % 360;
 
-  const panelW = 220;
-  const panelH = 100;
+  const panelW = 200;
+  const panelH = 70;
   const px = w - panelW - 16;
   const py = 16;
   roundedRect(ctx, px, py, panelW, panelH, 10);
@@ -371,31 +501,11 @@ function drawInfoPanel(ctx, w, h, boat) {
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#e6f4fb';
-  ctx.fillText(`Speed   ${speedKn.toFixed(1)} kn`, px + 14, py + 24);
-  ctx.fillText(`Heading ${headingDeg.toFixed(0).padStart(3, ' ')}°`, px + 14, py + 44);
-
-  ctx.fillText('Rudder', px + 14, py + 76);
-  drawCenteredBar(ctx, px + 80, py + 66, 120, 12, boat.rudder);
+  ctx.fillText(`Speed   ${speedKn.toFixed(1)} kn`, px + 14, py + 26);
+  ctx.fillText(`Heading ${headingDeg.toFixed(0).padStart(3, ' ')}°`, px + 14, py + 50);
 
   ctx.restore();
-}
-
-function drawCenteredBar(ctx, x, y, w, h, value) {
-  ctx.save();
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-  ctx.fillRect(x, y, w, h);
-  const cx = x + w / 2;
-  const v = Math.max(-1, Math.min(1, value));
-  const fillW = (v * w) / 2;
-  ctx.fillStyle = v >= 0 ? '#7fd8b6' : '#e6a17f';
-  if (fillW >= 0) ctx.fillRect(cx, y, fillW, h);
-  else ctx.fillRect(cx + fillW, y, -fillW, h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.beginPath();
-  ctx.moveTo(cx, y);
-  ctx.lineTo(cx, y + h);
-  ctx.stroke();
-  ctx.restore();
+  void h;
 }
 
 // ---------- Hints ----------
@@ -406,12 +516,12 @@ function drawHints(ctx, w, h) {
   ctx.fillStyle = 'rgba(230, 244, 251, 0.65)';
   ctx.textAlign = 'left';
   const lines = [
-    'W / ↑    Throttle up (sticky)',
-    'S / ↓    Throttle down (sticky)',
-    'A / ←    Helm left',
-    'D / →    Helm right',
-    'Space    Snap throttle to neutral',
-    'Mouse    Drag the throttle lever',
+    'W / ↑    Throttle up    (sticky)',
+    'S / ↓    Throttle down  (sticky)',
+    'A / ←    Helm to port   (sticky)',
+    'D / →    Helm to stbd   (sticky)',
+    'Space    Snap throttle & helm to neutral',
+    'Mouse    Drag throttle lever / helm wheel',
   ];
   const x = 16;
   const yTop = 24;

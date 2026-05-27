@@ -11,6 +11,7 @@ import {
   RUDDER_ARM,
   RUDDER_LIFT,
   THROTTLE_RAMP_RATE,
+  RUDDER_RAMP_RATE,
   THROTTLE_RATE,
   RUDDER_RATE,
 } from './constants.js';
@@ -54,12 +55,17 @@ function updateTargetsFromKeys(boat, keys, dt) {
     boat.throttleTarget = clamp(boat.throttleTarget + rate * dt, -1, 1);
   }
 
-  // Rudder — AUTO-RETURN: target reflects current key state each step.
-  let rt = 0;
-  if (keys.rudderLeft) rt -= 1;
-  if (keys.rudderRight) rt += 1;
-  if (keys.neutral) rt = 0;
-  boat.rudderTarget = rt;
+  // Rudder — STICKY: A/D ramp the target while held, stays on release.
+  // Mouse drag on the helm wheel writes the target directly (suppresses
+  // key ramping for the helm while the mouse owns it).
+  if (keys.neutral) {
+    boat.rudderTarget = 0;
+  } else if (!keys.mouseDraggingHelm) {
+    let rRate = 0;
+    if (keys.rudderLeft) rRate -= RUDDER_RAMP_RATE;
+    if (keys.rudderRight) rRate += RUDDER_RAMP_RATE;
+    boat.rudderTarget = clamp(boat.rudderTarget + rRate * dt, -1, 1);
+  }
 }
 
 // Advance the boat one fixed step.

@@ -52,3 +52,26 @@ export function yToThrottleValue(y, layout) {
   const v = t * 2 - 1;
   return v < -1 ? -1 : v > 1 ? 1 : v;
 }
+
+// ---------- Helm (steering wheel) ----------
+
+const HELM_RADIUS = 78;
+const HELM_BOTTOM_MARGIN = 28;
+const HELM_HIT_PAD = 16;
+
+// Helm anchored to BOTTOM-CENTER. Center is the wheel center; `radius` is
+// the rim radius (handles extend slightly past it).
+export function helmLayout(canvasCssW, canvasCssH) {
+  return {
+    cx: canvasCssW / 2,
+    cy: canvasCssH - HELM_RADIUS - HELM_BOTTOM_MARGIN,
+    radius: HELM_RADIUS,
+  };
+}
+
+export function hitTestHelm(x, y, layout) {
+  const dx = x - layout.cx;
+  const dy = y - layout.cy;
+  const r = layout.radius + HELM_HIT_PAD;
+  return dx * dx + dy * dy <= r * r;
+}
