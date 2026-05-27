@@ -26,7 +26,7 @@ export default function BoatGame() {
     fitCanvas();
 
     const world = createWorld();
-    const input = createInput();
+    const input = createInput({ canvas, world });
     const renderer = createRenderer(canvas);
     const loop = createLoop({
       world,

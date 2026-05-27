@@ -43,9 +43,11 @@ function lerpTowards(current, target, rate, dt) {
 
 function updateTargetsFromKeys(boat, keys, dt) {
   // Throttle — STICKY: ramps while held, stays on release. Only Space resets.
+  // While the mouse is dragging the throttle handle, ignore W/S so the two
+  // input sources don't fight each other (mouse writes directly to target).
   if (keys.neutral) {
     boat.throttleTarget = 0;
-  } else {
+  } else if (!keys.mouseDraggingThrottle) {
     let rate = 0;
     if (keys.throttleUp) rate += THROTTLE_RAMP_RATE;
     if (keys.throttleDown) rate -= THROTTLE_RAMP_RATE;

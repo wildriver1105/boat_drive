@@ -7,6 +7,7 @@ import {
   RUDDER_ARM,
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
+import { throttleLayout } from './ui-layout.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
@@ -178,10 +179,10 @@ function drawBoat(ctx, w, h, boat) {
 // ---------- Throttle handle (marine telegraph style) ----------
 
 function drawThrottleHandle(ctx, w, h, boat) {
-  const panelW = 110;
-  const panelH = 360;
-  const px = 16;
-  const py = h - panelH - 16;
+  const layout = throttleLayout(w, h);
+  const { panelW, panelH, px, py, trackTop, trackBottom, trackH, trackCx, trackW, knobW, knobH } = layout;
+  const trackLeft = trackCx - trackW / 2;
+  const valueToY = (v) => trackTop + (1 - (v + 1) / 2) * trackH;
 
   ctx.save();
 
@@ -201,15 +202,6 @@ function drawThrottleHandle(ctx, w, h, boat) {
   ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('THROTTLE', px + panelW / 2, py + 18);
-
-  // Track geometry
-  const trackTop = py + 32;
-  const trackBottom = py + panelH - 46;
-  const trackH = trackBottom - trackTop;
-  const trackCx = px + panelW / 2;
-  const trackW = 14;
-  const trackLeft = trackCx - trackW / 2;
-  const valueToY = (v) => trackTop + (1 - (v + 1) / 2) * trackH;
 
   // AHEAD / ASTERN zone wash behind the track.
   ctx.fillStyle = 'rgba(72, 168, 110, 0.18)';
@@ -306,15 +298,13 @@ function drawThrottleHandle(ctx, w, h, boat) {
     ctx.fill();
   }
 
-  // Knob at target — the lever handle.
+  // Knob at target — the lever handle (sized from shared layout).
   {
     const y = valueToY(boat.throttleTarget);
-    const kw = 46;
-    const kh = 20;
-    const kx = trackCx - kw / 2;
-    const ky = y - kh / 2;
-    roundedRect(ctx, kx, ky, kw, kh, 5);
-    const knobGrad = ctx.createLinearGradient(0, ky, 0, ky + kh);
+    const kx = trackCx - knobW / 2;
+    const ky = y - knobH / 2;
+    roundedRect(ctx, kx, ky, knobW, knobH, 5);
+    const knobGrad = ctx.createLinearGradient(0, ky, 0, ky + knobH);
     knobGrad.addColorStop(0, '#e5eaf0');
     knobGrad.addColorStop(0.5, '#a3aec0');
     knobGrad.addColorStop(1, '#525c70');
@@ -326,7 +316,7 @@ function drawThrottleHandle(ctx, w, h, boat) {
     // Center grip line
     ctx.beginPath();
     ctx.moveTo(kx + 8, y);
-    ctx.lineTo(kx + kw - 8, y);
+    ctx.lineTo(kx + knobW - 8, y);
     ctx.strokeStyle = 'rgba(20, 25, 35, 0.7)';
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -416,19 +406,20 @@ function drawHints(ctx, w, h) {
   ctx.fillStyle = 'rgba(230, 244, 251, 0.65)';
   ctx.textAlign = 'left';
   const lines = [
-    'W / ↑   Throttle up (sticky)',
-    'S / ↓   Throttle down (sticky)',
-    'A / ←   Helm left',
-    'D / →   Helm right',
-    'Space   Snap throttle to neutral',
+    'W / ↑    Throttle up (sticky)',
+    'S / ↓    Throttle down (sticky)',
+    'A / ←    Helm left',
+    'D / →    Helm right',
+    'Space    Snap throttle to neutral',
+    'Mouse    Drag the throttle lever',
   ];
-  const x = 140;
-  const yTop = h - 16 - (lines.length - 1) * 18 - 6;
+  const x = 16;
+  const yTop = 24;
   lines.forEach((line, i) => {
     ctx.fillText(line, x, yTop + i * 18);
   });
   ctx.restore();
-  void w;
+  void w; void h;
 }
 
 // ---------- Geometry helpers ----------
