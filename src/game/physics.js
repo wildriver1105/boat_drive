@@ -5,11 +5,12 @@ import {
   THRUST_REVERSE_SCALE,
   DRAG_FWD_LIN,
   DRAG_FWD_QUAD,
-  DRAG_LAT_LIN,
-  DRAG_LAT_QUAD,
-  RUDDER_GAIN,
-  YAW_DAMP_LIN,
-  YAW_DAMP_QUAD,
+  HULL_DRAG_ARM,
+  DRAG_LAT_LIN_PER_POINT,
+  DRAG_LAT_QUAD_PER_POINT,
+  RUDDER_ARM,
+  RUDDER_LIFT,
+  THROTTLE_RAMP_RATE,
   THROTTLE_RATE,
   RUDDER_RATE,
 } from './constants.js';
@@ -19,12 +20,19 @@ export function createBoat(x = 0, y = 0, heading = 0) {
     x, y, heading,
     vx: 0, vy: 0,
     omega: 0,
+    // Engine throttle: target is "sticky", actual smooths toward it (engine response).
+    throttleTarget: 0,
     throttle: 0,
+    // Rudder helm: target is auto-return (set by key state), actual smooths toward it.
+    rudderTarget: 0,
     rudder: 0,
   };
 }
 
-// Move `current` toward `target` at `rate` per second.
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
 function lerpTowards(current, target, rate, dt) {
   const diff = target - current;
   const maxStep = rate * dt;
@@ -33,44 +41,83 @@ function lerpTowards(current, target, rate, dt) {
   return target;
 }
 
-// Advance the boat one fixed step.
-// targets: { throttle: -1..1, rudder: -1..1 }
-export function stepBoat(boat, targets, dt) {
-  // Smooth inputs toward targets — gives the helm a bit of "wheel weight".
-  boat.throttle = lerpTowards(boat.throttle, targets.throttle, THROTTLE_RATE, dt);
-  boat.rudder = lerpTowards(boat.rudder, targets.rudder, RUDDER_RATE, dt);
+function updateTargetsFromKeys(boat, keys, dt) {
+  // Throttle — STICKY: ramps while held, stays on release. Only Space resets.
+  if (keys.neutral) {
+    boat.throttleTarget = 0;
+  } else {
+    let rate = 0;
+    if (keys.throttleUp) rate += THROTTLE_RAMP_RATE;
+    if (keys.throttleDown) rate -= THROTTLE_RAMP_RATE;
+    boat.throttleTarget = clamp(boat.throttleTarget + rate * dt, -1, 1);
+  }
 
+  // Rudder — AUTO-RETURN: target reflects current key state each step.
+  let rt = 0;
+  if (keys.rudderLeft) rt -= 1;
+  if (keys.rudderRight) rt += 1;
+  if (keys.neutral) rt = 0;
+  boat.rudderTarget = rt;
+}
+
+// Advance the boat one fixed step.
+export function stepBoat(boat, keys, dt) {
+  updateTargetsFromKeys(boat, keys, dt);
+
+  // Engine response & helm response (smooth toward targets).
+  boat.throttle = lerpTowards(boat.throttle, boat.throttleTarget, THROTTLE_RATE, dt);
+  boat.rudder = lerpTowards(boat.rudder, boat.rudderTarget, RUDDER_RATE, dt);
+
+  // World velocity → hull-local (forward / lateral) frame.
   const cosH = Math.cos(boat.heading);
   const sinH = Math.sin(boat.heading);
+  const vFwd = boat.vx * cosH + boat.vy * sinH;
+  const vLat = -boat.vx * sinH + boat.vy * cosH;
 
-  // World velocity → hull-local frame (forward / lateral).
-  const forward = boat.vx * cosH + boat.vy * sinH;
-  const lateral = -boat.vx * sinH + boat.vy * cosH;
+  // Lateral velocity at the bow and stern drag points. A body-fixed point at
+  // body-frame (x_b, 0) has body-frame velocity (vFwd, vLat + ω·x_b). The
+  // bow swings opposite to the stern when the boat yaws — this is the
+  // mechanism that gives realistic bow/stern differential motion.
+  const vL_bow = vLat + boat.omega * HULL_DRAG_ARM;
+  const vL_stern = vLat - boat.omega * HULL_DRAG_ARM;
 
-  // Thrust along forward axis. Reverse is weaker than forward.
+  // Lateral hull drag at each point (linear + quadratic).
+  const F_lat_bow =
+    -DRAG_LAT_LIN_PER_POINT * vL_bow -
+    DRAG_LAT_QUAD_PER_POINT * vL_bow * Math.abs(vL_bow);
+  const F_lat_stern =
+    -DRAG_LAT_LIN_PER_POINT * vL_stern -
+    DRAG_LAT_QUAD_PER_POINT * vL_stern * Math.abs(vL_stern);
+
+  // Engine thrust along forward axis. Reverse is weaker than forward.
   const thrustScale = boat.throttle >= 0 ? 1 : THRUST_REVERSE_SCALE;
-  const fThrust = boat.throttle * THRUST_MAX * thrustScale;
+  const F_thrust = boat.throttle * THRUST_MAX * thrustScale;
 
-  // Hydrodynamic drag (asymmetric: hull resists sideways motion much more).
-  const fDragFwd =
-    -DRAG_FWD_LIN * forward - DRAG_FWD_QUAD * forward * Math.abs(forward);
-  const fDragLat =
-    -DRAG_LAT_LIN * lateral - DRAG_LAT_QUAD * lateral * Math.abs(lateral);
+  // Forward drag at CG.
+  const F_drag_fwd =
+    -DRAG_FWD_LIN * vFwd - DRAG_FWD_QUAD * vFwd * Math.abs(vFwd);
 
-  // Net local forces → world acceleration.
-  const fLocalFwd = fThrust + fDragFwd;
-  const fLocalLat = fDragLat;
-  const ax = (fLocalFwd * cosH - fLocalLat * sinH) / MASS;
-  const ay = (fLocalFwd * sinH + fLocalLat * cosH) / MASS;
+  // Rudder lift force, applied at the stern (x = -RUDDER_ARM), perpendicular
+  // to the hull. Magnitude ∝ vFwd² with sign from vFwd·|vFwd| so reversing
+  // flips the side the stern is kicked toward — exactly like a real boat.
+  const F_rudder = -RUDDER_LIFT * boat.rudder * vFwd * Math.abs(vFwd);
 
-  // Rudder torque depends on water flow over the rudder, i.e. forward speed.
-  // Reversing flips the sign naturally (forward < 0 → opposite yaw direction).
-  const tauRudder = boat.rudder * RUDDER_GAIN * forward;
-  const tauDamp =
-    -YAW_DAMP_LIN * boat.omega - YAW_DAMP_QUAD * boat.omega * Math.abs(boat.omega);
-  const alpha = (tauRudder + tauDamp) / I_Z;
+  // Sum of body-frame forces.
+  const F_body_x = F_thrust + F_drag_fwd;
+  const F_body_y = F_lat_bow + F_lat_stern + F_rudder;
 
-  // Semi-implicit Euler: update velocities first, then positions.
+  // Torque about CG: τ = Σ x_b · F_y for each lateral force at (x_b, 0).
+  const tau =
+    HULL_DRAG_ARM * F_lat_bow +
+    -HULL_DRAG_ARM * F_lat_stern +
+    -RUDDER_ARM * F_rudder;
+
+  // Body → world acceleration.
+  const ax = (F_body_x * cosH - F_body_y * sinH) / MASS;
+  const ay = (F_body_x * sinH + F_body_y * cosH) / MASS;
+  const alpha = tau / I_Z;
+
+  // Semi-implicit Euler.
   boat.vx += ax * dt;
   boat.vy += ay * dt;
   boat.omega += alpha * dt;
@@ -79,12 +126,23 @@ export function stepBoat(boat, targets, dt) {
   boat.y += boat.vy * dt;
   boat.heading += boat.omega * dt;
 
-  // Keep heading in (-π, π] to avoid unbounded growth.
   if (boat.heading > Math.PI) boat.heading -= 2 * Math.PI;
   else if (boat.heading <= -Math.PI) boat.heading += 2 * Math.PI;
 }
 
-// Convenience: speed magnitude in m/s
+// Diagnostic helpers used by the renderer (HUD / pivot dot).
 export function boatSpeed(boat) {
   return Math.hypot(boat.vx, boat.vy);
+}
+
+// Instantaneous "lateral pivot point" of the hull in body-frame x.
+// This is the point along the centerline whose lateral velocity (vLat + ω·x)
+// is zero — i.e. the point about which the hull is instantaneously rotating
+// in the lateral sense. Returns null when the boat is barely yawing.
+export function lateralPivotBodyX(boat) {
+  if (Math.abs(boat.omega) < 0.04) return null;
+  const cosH = Math.cos(boat.heading);
+  const sinH = Math.sin(boat.heading);
+  const vLat = -boat.vx * sinH + boat.vy * cosH;
+  return -vLat / boat.omega;
 }

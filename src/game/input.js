@@ -1,5 +1,6 @@
-// Tracks raw key state on window, and exposes target values for throttle/rudder.
-// The physics module is responsible for smoothing these targets over time.
+// Tracks raw key state on window. The physics module reads `getKeys()`
+// each step and decides how those keys move the throttle (sticky) and the
+// rudder (auto-return) targets.
 
 export function createInput() {
   const keys = new Set();
@@ -23,18 +24,14 @@ export function createInput() {
   window.addEventListener('blur', onBlur);
 
   return {
-    getTargets() {
-      let throttle = 0;
-      let rudder = 0;
-      if (keys.has('KeyW') || keys.has('ArrowUp')) throttle += 1;
-      if (keys.has('KeyS') || keys.has('ArrowDown')) throttle -= 1;
-      if (keys.has('KeyA') || keys.has('ArrowLeft')) rudder -= 1;
-      if (keys.has('KeyD') || keys.has('ArrowRight')) rudder += 1;
-      if (keys.has('Space')) {
-        throttle = 0;
-        rudder = 0;
-      }
-      return { throttle, rudder };
+    getKeys() {
+      return {
+        throttleUp: keys.has('KeyW') || keys.has('ArrowUp'),
+        throttleDown: keys.has('KeyS') || keys.has('ArrowDown'),
+        rudderLeft: keys.has('KeyA') || keys.has('ArrowLeft'),
+        rudderRight: keys.has('KeyD') || keys.has('ArrowRight'),
+        neutral: keys.has('Space'),
+      };
     },
     destroy() {
       window.removeEventListener('keydown', onKeyDown);

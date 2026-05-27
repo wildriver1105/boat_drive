@@ -16,19 +16,17 @@ export function createLoop({ world, input, render }) {
     if (!lastTs) lastTs = ts;
     let dt = (ts - lastTs) / 1000;
     lastTs = ts;
-    // Cap huge gaps (tab switch) so we don't try to "catch up" a huge sim chunk.
-    if (dt > 0.25) dt = 0.25;
+    if (dt > 0.25) dt = 0.25; // tab-switch protection
     accumulator += dt;
 
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
-      const targets = input.getTargets();
-      stepBoat(world.boat, targets, FIXED_DT);
+      const keys = input.getKeys();
+      stepBoat(world.boat, keys, FIXED_DT);
       updateTrails(world, FIXED_DT);
       accumulator -= FIXED_DT;
       steps += 1;
     }
-    // If we hit the step cap, drop the leftover so the sim doesn't drift further.
     if (steps >= MAX_STEPS_PER_FRAME) accumulator = 0;
 
     render(world);
