@@ -88,3 +88,15 @@ export const WIND_ARM = 1.2;
 export const WAKE_EMIT_INTERVAL = 0.04;
 export const WAKE_LIFETIME = 3.0;
 export const WAKE_MAX_POINTS = 200;
+
+// === Wind streaks (America's Cup broadcast style) ===
+// Sparse white world-space streaks that drift with the wind. Only render
+// when the wind is strong enough to notice, and cap the count so they
+// stay an ambient cue rather than visual clutter.
+export const WIND_STREAK_MAX = 25;            // peak on-screen count at full wind
+export const WIND_STREAK_LIFETIME = 2.6;       // seconds (mean; randomized ±20%)
+export const WIND_STREAK_SPAWN_RADIUS_M = 32;  // spawn box half-side (world m around camera)
+export const WIND_STREAK_THRESHOLD = 3;        // m/s; below this nothing spawns
+export const WIND_STREAK_FULL_SPEED = 12;      // m/s; density reaches WIND_STREAK_MAX here
+export const WIND_STREAK_LEN_M = 1.6;          // base length of each streak (±25%)
+export const WIND_STREAK_ALPHA = 0.42;         // peak alpha at the middle of the envelope

@@ -1,5 +1,5 @@
 import { stepBoat } from './physics.js';
-import { updateTrails } from './world.js';
+import { updateTrails, updateWindStreaks } from './world.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from './constants.js';
 
 // Drives the simulation with a fixed-dt accumulator so the physics is
@@ -24,6 +24,7 @@ export function createLoop({ world, input, render }) {
       const keys = input.getKeys();
       stepBoat(world.boat, keys, world.wind, FIXED_DT);
       updateTrails(world, FIXED_DT);
+      updateWindStreaks(world, FIXED_DT);
       accumulator -= FIXED_DT;
       steps += 1;
     }

@@ -6,6 +6,7 @@ import {
   WAKE_LIFETIME,
   RUDDER_ARM,
   HELM_MAX_ANGLE,
+  WIND_STREAK_ALPHA,
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
 import { throttleLayout, helmLayout } from './ui-layout.js';
@@ -23,6 +24,7 @@ export function createRenderer(canvas) {
     ctx.clearRect(0, 0, w, h);
 
     drawSea(ctx, w, h, world);
+    drawWindStreaks(ctx, w, h, world);
     drawWake(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
     drawBoat(ctx, w, h, world.boat);
@@ -71,6 +73,66 @@ function drawSea(ctx, w, h, world) {
     ctx.beginPath();
     ctx.moveTo(px, py);
     ctx.lineTo(px + len, py);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---------- Wind streaks (America's Cup broadcast style) ----------
+
+function drawWindStreaks(ctx, w, h, world) {
+  const streaks = world.windStreaks;
+  if (!streaks || streaks.length === 0) return;
+
+  const wind = world.wind;
+  // Direction the wind is blowing TO. Streaks align with this vector.
+  const dirX = wind ? -Math.sin(wind.fromBearing) : 0;
+  const dirY = wind ?  Math.cos(wind.fromBearing) : 0;
+  // If there's somehow no wind direction, bail.
+  if (dirX === 0 && dirY === 0) return;
+
+  const cx = w / 2;
+  const cy = h / 2;
+  const bx = world.boat.x;
+  const by = world.boat.y;
+  const t = world.time;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 1.6;
+
+  for (let i = 0; i < streaks.length; i++) {
+    const s = streaks[i];
+    const age = t - s.born;
+    if (age < 0 || age >= s.lifetime) continue;
+
+    // Sine envelope so each streak fades in, holds, fades out smoothly.
+    const u = age / s.lifetime;
+    const envelope = Math.sin(u * Math.PI);
+    const alpha = envelope * WIND_STREAK_ALPHA;
+    if (alpha < 0.015) continue;
+
+    const sx = cx + (s.x - bx) * PX_PER_M;
+    const sy = cy + (s.y - by) * PX_PER_M;
+    const lenPx = s.length * PX_PER_M;
+    const tipX = sx + dirX * lenPx;
+    const tipY = sy + dirY * lenPx;
+
+    // Cheap viewport cull (after computing screen coords).
+    if ((sx < -40 && tipX < -40) || (sx > w + 40 && tipX > w + 40)) continue;
+    if ((sy < -40 && tipY < -40) || (sy > h + 40 && tipY > h + 40)) continue;
+
+    // Gradient along the streak — transparent at both ends, brightest in the
+    // middle — gives the "comet trail" look common in sailing broadcasts.
+    const grad = ctx.createLinearGradient(sx, sy, tipX, tipY);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    grad.addColorStop(0.35, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+    grad.addColorStop(0.7, `rgba(255, 255, 255, ${(alpha * 0.85).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.strokeStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tipX, tipY);
     ctx.stroke();
   }
   ctx.restore();
