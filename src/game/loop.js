@@ -22,7 +22,7 @@ export function createLoop({ world, input, render }) {
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
       const keys = input.getKeys();
-      stepBoat(world.boat, keys, FIXED_DT);
+      stepBoat(world.boat, keys, world.wind, FIXED_DT);
       updateTrails(world, FIXED_DT);
       accumulator -= FIXED_DT;
       steps += 1;

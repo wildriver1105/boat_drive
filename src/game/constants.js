@@ -73,6 +73,17 @@ export const RUDDER_RATE = 3.0;
 // (no ambiguity at the extremes).
 export const HELM_MAX_ANGLE = Math.PI * 0.75; // ±135°
 
+// === Wind (configured at runtime from the Settings modal) ===
+// Aerodynamic drag style force from the air on the boat's freeboard /
+// superstructure: |F_wind| = WIND_COEF × |v_apparent|², where v_apparent is
+// the WIND velocity relative to the BOAT (i.e. v_wind − v_boat_at_windage).
+// The force is applied at body-frame (WIND_ARM, 0) — a point forward of CG,
+// because a small motor boat's freeboard / cabin / windshield is mostly
+// forward. That offset produces a small weathervaning torque, so a beam
+// wind tends to push the bow downwind (classic small-boat behavior).
+export const WIND_COEF = 12;
+export const WIND_ARM = 1.2;
+
 // === Wake ===
 export const WAKE_EMIT_INTERVAL = 0.04;
 export const WAKE_LIFETIME = 3.0;

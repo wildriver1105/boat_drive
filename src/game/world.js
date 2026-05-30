@@ -8,6 +8,13 @@ export function createWorld() {
     wake: [],
     wakeAccumulator: 0,
     time: 0,
+    // Environment — configured at runtime via the Settings modal.
+    // fromBearing is METEOROLOGICAL: the compass bearing the wind COMES FROM.
+    // 0 = wind from north (blowing south); 90 = from east; etc.
+    wind: {
+      speed: 0,        // m/s
+      fromBearing: 0,  // radians (compass bearing converted to radians)
+    },
   };
 }
 

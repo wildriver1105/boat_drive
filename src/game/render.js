@@ -28,7 +28,7 @@ export function createRenderer(canvas) {
     drawBoat(ctx, w, h, world.boat);
     drawHelm(ctx, w, h, world.boat);
     drawThrottleHandle(ctx, w, h, world.boat);
-    drawInfoPanel(ctx, w, h, world.boat);
+    drawInfoPanel(ctx, w, h, world);
     drawHints(ctx, w, h);
   }
 
@@ -838,7 +838,11 @@ function throttleOrder(value) {
 
 // ---------- Info panel (speed, heading, rudder) ----------
 
-function drawInfoPanel(ctx, w, h, boat) {
+function drawInfoPanel(ctx, w, h, world) {
+  const boat = world.boat;
+  const wind = world.wind;
+  const windOn = wind && wind.speed > 0.1;
+
   ctx.save();
   ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
@@ -846,8 +850,8 @@ function drawInfoPanel(ctx, w, h, boat) {
   let headingDeg = (boat.heading * 180) / Math.PI;
   headingDeg = ((headingDeg % 360) + 360) % 360;
 
-  const panelW = 200;
-  const panelH = 70;
+  const panelW = 230;
+  const panelH = windOn ? 132 : 70;
   const px = w - panelW - 16;
   const py = 16;
   roundedRect(ctx, px, py, panelW, panelH, 10);
@@ -861,8 +865,81 @@ function drawInfoPanel(ctx, w, h, boat) {
   ctx.fillText(`Speed   ${speedKn.toFixed(1)} kn`, px + 14, py + 26);
   ctx.fillText(`Heading ${headingDeg.toFixed(0).padStart(3, ' ')}°`, px + 14, py + 50);
 
+  if (windOn) {
+    const windKn = wind.speed * M_TO_KN;
+    let fromDeg = (wind.fromBearing * 180) / Math.PI;
+    fromDeg = ((fromDeg % 360) + 360) % 360;
+    const cardinal = bearingToCardinal(fromDeg);
+
+    // Separator
+    ctx.strokeStyle = 'rgba(200, 235, 250, 0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + 12, py + 64);
+    ctx.lineTo(px + panelW - 12, py + 64);
+    ctx.stroke();
+
+    ctx.fillStyle = '#e6f4fb';
+    ctx.fillText(
+      `Wind    ${windKn.toFixed(0)} kn from ${cardinal}`,
+      px + 14,
+      py + 86
+    );
+    ctx.fillStyle = 'rgba(200, 220, 235, 0.6)';
+    ctx.font = '11px monospace';
+    ctx.fillText(`        ${fromDeg.toFixed(0).padStart(3, ' ')}° true`, px + 14, py + 102);
+
+    // Mini wind compass on the right of the panel
+    const compCx = px + panelW - 30;
+    const compCy = py + 95;
+    const compR = 20;
+    ctx.beginPath();
+    ctx.arc(compCx, compCy, compR, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200, 235, 250, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // N tick
+    ctx.fillStyle = 'rgba(255, 130, 130, 0.95)';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('N', compCx, compCy - compR + 9);
+
+    // Arrow shows where the wind is BLOWING TO (fromBearing + π).
+    const bearingTo = wind.fromBearing + Math.PI;
+    const dirX = Math.sin(bearingTo);
+    const dirY = -Math.cos(bearingTo);
+    const arrLen = compR - 4;
+    const tipX = compCx + dirX * arrLen;
+    const tipY = compCy + dirY * arrLen;
+    const tailX = compCx - dirX * (arrLen - 4);
+    const tailY = compCy - dirY * (arrLen - 4);
+    ctx.strokeStyle = '#9ed7f8';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(tailX, tailY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    const perpX = -dirY;
+    const perpY = dirX;
+    ctx.fillStyle = '#9ed7f8';
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - dirX * 6 + perpX * 3.5, tipY - dirY * 6 + perpY * 3.5);
+    ctx.lineTo(tipX - dirX * 6 - perpX * 3.5, tipY - dirY * 6 - perpY * 3.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   ctx.restore();
   void h;
+}
+
+function bearingToCardinal(deg) {
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[Math.round(deg / 45) % 8];
 }
 
 // ---------- Hints ----------

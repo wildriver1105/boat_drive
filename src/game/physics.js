@@ -14,6 +14,8 @@ import {
   RUDDER_RAMP_RATE,
   THROTTLE_RATE,
   RUDDER_RATE,
+  WIND_COEF,
+  WIND_ARM,
 } from './constants.js';
 
 export function createBoat(x = 0, y = 0, heading = 0) {
@@ -68,8 +70,9 @@ function updateTargetsFromKeys(boat, keys, dt) {
   }
 }
 
-// Advance the boat one fixed step.
-export function stepBoat(boat, keys, dt) {
+// Advance the boat one fixed step. `wind` (optional) is the world environment
+// wind state: { speed, fromBearing }. Pass null/undefined for calm air.
+export function stepBoat(boat, keys, wind, dt) {
   updateTargetsFromKeys(boat, keys, dt);
 
   // Engine response & helm response (smooth toward targets).
@@ -110,15 +113,41 @@ export function stepBoat(boat, keys, dt) {
   // flips the side the stern is kicked toward — exactly like a real boat.
   const F_rudder = -RUDDER_LIFT * boat.rudder * vFwd * Math.abs(vFwd);
 
+  // Wind force at the windage point (body x = +WIND_ARM, slightly forward of
+  // CG). World wind velocity (fromBearing is meteorological — direction the
+  // wind COMES FROM, so we negate to get the velocity vector). Canvas axes:
+  // +x = east, +y = south, so bearing α (0=N) → unit direction (sin α, -cos α).
+  let F_wind_body_x = 0;
+  let F_wind_body_y = 0;
+  if (wind && wind.speed > 0.01) {
+    // Wind velocity in world frame (blowing TO bearing + π = away from origin).
+    const windVx = -Math.sin(wind.fromBearing) * wind.speed;
+    const windVy =  Math.cos(wind.fromBearing) * wind.speed;
+    // World velocity of the windage point (CG velocity + rotational lever).
+    const windagePtVx = boat.vx - boat.omega * WIND_ARM * sinH;
+    const windagePtVy = boat.vy + boat.omega * WIND_ARM * cosH;
+    // Apparent wind = what the boat actually feels at that point.
+    const appWx = windVx - windagePtVx;
+    const appWy = windVy - windagePtVy;
+    const appW = Math.hypot(appWx, appWy);
+    // Quadratic drag in apparent-wind direction.
+    const F_wind_world_x = WIND_COEF * appW * appWx;
+    const F_wind_world_y = WIND_COEF * appW * appWy;
+    // World → body so we can sum with the hull forces and torque correctly.
+    F_wind_body_x =  F_wind_world_x * cosH + F_wind_world_y * sinH;
+    F_wind_body_y = -F_wind_world_x * sinH + F_wind_world_y * cosH;
+  }
+
   // Sum of body-frame forces.
-  const F_body_x = F_thrust + F_drag_fwd;
-  const F_body_y = F_lat_bow + F_lat_stern + F_rudder;
+  const F_body_x = F_thrust + F_drag_fwd + F_wind_body_x;
+  const F_body_y = F_lat_bow + F_lat_stern + F_rudder + F_wind_body_y;
 
   // Torque about CG: τ = Σ x_b · F_y for each lateral force at (x_b, 0).
   const tau =
     HULL_DRAG_ARM * F_lat_bow +
     -HULL_DRAG_ARM * F_lat_stern +
-    -RUDDER_ARM * F_rudder;
+    -RUDDER_ARM * F_rudder +
+    WIND_ARM * F_wind_body_y;
 
   // Body → world acceleration.
   const ax = (F_body_x * cosH - F_body_y * sinH) / MASS;
