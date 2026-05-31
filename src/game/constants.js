@@ -18,6 +18,17 @@ export const BOAT_WIDTH = 2.2;
 export const THRUST_MAX = 9000;
 export const THRUST_REVERSE_SCALE = 0.4;  // reverse is weaker than forward
 
+// Marine throttles have a NEUTRAL DETENT at the center of the lever travel:
+// a click-zone where the gearbox is in neutral and the propeller produces
+// no thrust regardless of engine RPM. Anything within ±THROTTLE_NEUTRAL_BAND
+// of zero is treated as neutral (engine idling, clutch disengaged), and the
+// keyboard ramp "catches" at the band edge so the lever can't be pushed
+// straight through without a deliberate re-press of the key.
+export const THROTTLE_NEUTRAL_BAND = 0.05;
+// How long the visual "catch" pulse lingers on the neutral band after a
+// catch event — purely cosmetic, gives the user the "탁" feedback.
+export const THROTTLE_CATCH_PULSE_TIME = 0.45;
+
 // === Hydrodynamic drag ===
 // Forward drag at CG (hull sliding through water along its long axis).
 export const DRAG_FWD_LIN = 50;

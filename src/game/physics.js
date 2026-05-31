@@ -16,6 +16,8 @@ import {
   RUDDER_RATE,
   WIND_COEF,
   WIND_ARM,
+  THROTTLE_NEUTRAL_BAND,
+  THROTTLE_CATCH_PULSE_TIME,
 } from './constants.js';
 
 export function createBoat(x = 0, y = 0, heading = 0) {
@@ -26,6 +28,14 @@ export function createBoat(x = 0, y = 0, heading = 0) {
     // Engine throttle: target is "sticky", actual smooths toward it (engine response).
     throttleTarget: 0,
     throttle: 0,
+    // Each direction key gets ONE allowed zone-crossing per press. When the
+    // lever catches at neutral while the key is still held, the key is
+    // "consumed" and further holding cannot move past the detent — the user
+    // must release the key and press it again. Cleared on key release.
+    throttleUpConsumed: false,
+    throttleDownConsumed: false,
+    // Visual feedback: short-lived bloom on the neutral band after a catch.
+    catchPulse: 0,
     // Rudder helm: target is auto-return (set by key state), actual smooths toward it.
     rudderTarget: 0,
     rudder: 0,
@@ -45,16 +55,59 @@ function lerpTowards(current, target, rate, dt) {
 }
 
 function updateTargetsFromKeys(boat, keys, dt) {
-  // Throttle — STICKY: ramps while held, stays on release. Only Space resets.
-  // While the mouse is dragging the throttle handle, ignore W/S so the two
-  // input sources don't fight each other (mouse writes directly to target).
+  // Reset the "consumed" flags whenever the key is not held — that's the
+  // edge that lets the next press cross a zone again.
+  if (!keys.throttleUp) boat.throttleUpConsumed = false;
+  if (!keys.throttleDown) boat.throttleDownConsumed = false;
+
+  // Throttle — STICKY with NEUTRAL DETENT CATCH:
+  //   * Hold W/S → throttleTarget ramps. When the target crosses into the
+  //     ±NEUTRAL_BAND zone from outside, it snaps to 0 and the key is
+  //     "consumed" — further holding the same key cannot move past until it
+  //     is released and pressed again. One zone transition per key press.
+  //   * Space → snap to 0 AND consume any held throttle key, so the boat
+  //     doesn't immediately ramp away from neutral.
+  //   * Mouse drag on the handle → bypasses the catch (direct manipulation).
   if (keys.neutral) {
+    if (boat.throttleTarget !== 0) boat.catchPulse = THROTTLE_CATCH_PULSE_TIME;
     boat.throttleTarget = 0;
+    if (keys.throttleUp) boat.throttleUpConsumed = true;
+    if (keys.throttleDown) boat.throttleDownConsumed = true;
   } else if (!keys.mouseDraggingThrottle) {
     let rate = 0;
     if (keys.throttleUp) rate += THROTTLE_RAMP_RATE;
     if (keys.throttleDown) rate -= THROTTLE_RAMP_RATE;
-    boat.throttleTarget = clamp(boat.throttleTarget + rate * dt, -1, 1);
+
+    if (rate !== 0) {
+      let newTarget = clamp(boat.throttleTarget + rate * dt, -1, 1);
+
+      // Catch when entering the neutral band from outside.
+      const enteringFromBelow =
+        rate > 0 &&
+        boat.throttleTarget < -THROTTLE_NEUTRAL_BAND &&
+        newTarget >= -THROTTLE_NEUTRAL_BAND;
+      const enteringFromAbove =
+        rate < 0 &&
+        boat.throttleTarget > THROTTLE_NEUTRAL_BAND &&
+        newTarget <= THROTTLE_NEUTRAL_BAND;
+
+      if (enteringFromBelow) {
+        newTarget = 0;
+        boat.throttleUpConsumed = true;
+        boat.catchPulse = THROTTLE_CATCH_PULSE_TIME;
+      } else if (enteringFromAbove) {
+        newTarget = 0;
+        boat.throttleDownConsumed = true;
+        boat.catchPulse = THROTTLE_CATCH_PULSE_TIME;
+      } else if (boat.throttleTarget === 0) {
+        // Sitting at the catch — a held key whose press already crossed
+        // cannot move the lever out of neutral until it is re-pressed.
+        if (rate > 0 && boat.throttleUpConsumed) newTarget = 0;
+        if (rate < 0 && boat.throttleDownConsumed) newTarget = 0;
+      }
+
+      boat.throttleTarget = newTarget;
+    }
   }
 
   // Rudder — STICKY: A/D ramp the target while held, stays on release.
@@ -79,6 +132,11 @@ export function stepBoat(boat, keys, wind, dt) {
   boat.throttle = lerpTowards(boat.throttle, boat.throttleTarget, THROTTLE_RATE, dt);
   boat.rudder = lerpTowards(boat.rudder, boat.rudderTarget, RUDDER_RATE, dt);
 
+  // Decay the visual catch pulse.
+  if (boat.catchPulse > 0) {
+    boat.catchPulse = Math.max(0, boat.catchPulse - dt);
+  }
+
   // World velocity → hull-local (forward / lateral) frame.
   const cosH = Math.cos(boat.heading);
   const sinH = Math.sin(boat.heading);
@@ -100,9 +158,18 @@ export function stepBoat(boat, keys, wind, dt) {
     -DRAG_LAT_LIN_PER_POINT * vL_stern -
     DRAG_LAT_QUAD_PER_POINT * vL_stern * Math.abs(vL_stern);
 
-  // Engine thrust along forward axis. Reverse is weaker than forward.
-  const thrustScale = boat.throttle >= 0 ? 1 : THRUST_REVERSE_SCALE;
-  const F_thrust = boat.throttle * THRUST_MAX * thrustScale;
+  // Engine thrust along forward axis. Inside the neutral band the gearbox
+  // is in NEUTRAL (clutch disengaged) — engine RPM may still be up but the
+  // prop produces no thrust. Beyond the band the value is rescaled so that
+  // |throttle|=1 still gives full thrust. Reverse is weaker than forward.
+  const tMag = Math.abs(boat.throttle);
+  let engaged = 0;
+  if (tMag > THROTTLE_NEUTRAL_BAND) {
+    const sign = boat.throttle >= 0 ? 1 : -1;
+    engaged = (sign * (tMag - THROTTLE_NEUTRAL_BAND)) / (1 - THROTTLE_NEUTRAL_BAND);
+  }
+  const thrustScale = engaged >= 0 ? 1 : THRUST_REVERSE_SCALE;
+  const F_thrust = engaged * THRUST_MAX * thrustScale;
 
   // Forward drag at CG.
   const F_drag_fwd =

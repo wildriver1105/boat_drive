@@ -7,6 +7,8 @@ import {
   RUDDER_ARM,
   HELM_MAX_ANGLE,
   WIND_STREAK_ALPHA,
+  THROTTLE_NEUTRAL_BAND,
+  THROTTLE_CATCH_PULSE_TIME,
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
 import { throttleLayout, helmLayout } from './ui-layout.js';
@@ -758,15 +760,29 @@ function drawThrottleHandle(ctx, w, h, boat) {
   ctx.fillStyle = 'rgba(196, 96, 76, 0.20)';
   ctx.fillRect(trackLeft - 22, trackTop + trackH / 2, trackW + 44, trackH / 2);
 
-  // Neutral detent band
-  const neutralBandH = 12;
-  ctx.fillStyle = 'rgba(170, 180, 195, 0.32)';
+  // Neutral detent band — width matches the physics deadband so the visual
+  // and the feel match. A short-lived "catch pulse" briefly brightens the
+  // band when the lever clicks into neutral.
+  const neutralBandH = Math.max(10, THROTTLE_NEUTRAL_BAND * trackH * 2);
+  const pulse = Math.max(0, Math.min(1, boat.catchPulse / THROTTLE_CATCH_PULSE_TIME));
+  const bandBaseAlpha = 0.32 + pulse * 0.45;
+  ctx.fillStyle = `rgba(180, 195, 215, ${bandBaseAlpha.toFixed(3)})`;
   ctx.fillRect(
     trackLeft - 26,
     trackTop + trackH / 2 - neutralBandH / 2,
     trackW + 52,
     neutralBandH
   );
+  if (pulse > 0) {
+    // Bright halo flash that fades out — the "탁" feedback.
+    ctx.fillStyle = `rgba(255, 240, 180, ${(pulse * 0.55).toFixed(3)})`;
+    ctx.fillRect(
+      trackLeft - 32,
+      trackTop + trackH / 2 - neutralBandH / 2 - 3,
+      trackW + 64,
+      neutralBandH + 6
+    );
+  }
 
   // Track itself
   ctx.fillStyle = 'rgba(8, 18, 26, 0.95)';
@@ -888,7 +904,7 @@ function drawThrottleHandle(ctx, w, h, boat) {
 
 function throttleOrder(value) {
   const a = Math.abs(value);
-  if (a < 0.04) return 'NEUTRAL';
+  if (a <= THROTTLE_NEUTRAL_BAND) return 'NEUTRAL';
   const dir = value > 0 ? 'AHEAD' : 'ASTERN';
   if (a > 0.94) return 'FULL ' + dir;
   if (a > 0.78) return dir + ' 3/4';
@@ -1012,12 +1028,13 @@ function drawHints(ctx, w, h) {
   ctx.fillStyle = 'rgba(230, 244, 251, 0.65)';
   ctx.textAlign = 'left';
   const lines = [
-    'W / ↑    Throttle up    (sticky)',
-    'S / ↓    Throttle down  (sticky)',
+    'W / ↑    Throttle up    (sticky • catches at neutral)',
+    'S / ↓    Throttle down  (sticky • catches at neutral)',
     'A / ←    Helm to port   (sticky)',
     'D / →    Helm to stbd   (sticky)',
     'Space    Snap throttle & helm to neutral',
     'Mouse    Drag throttle lever / helm wheel',
+    '         (release & re-press W/S to cross neutral)',
   ];
   const x = 16;
   const yTop = 24;
