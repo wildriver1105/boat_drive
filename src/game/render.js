@@ -754,33 +754,63 @@ function drawThrottleHandle(ctx, w, h, boat) {
   ctx.textAlign = 'center';
   ctx.fillText('THROTTLE', px + panelW / 2, py + 18);
 
-  // AHEAD / ASTERN zone wash behind the track.
-  ctx.fillStyle = 'rgba(72, 168, 110, 0.18)';
-  ctx.fillRect(trackLeft - 22, trackTop, trackW + 44, trackH / 2);
-  ctx.fillStyle = 'rgba(196, 96, 76, 0.20)';
-  ctx.fillRect(trackLeft - 22, trackTop + trackH / 2, trackW + 44, trackH / 2);
+  // Marine-control color zones (matches the green-N / red-extreme convention
+  // on a real single-lever throttle):
+  //   • centre band   → bright green NEUTRAL zone (gearbox disengaged)
+  //   • away from N   → orange/red gradient to FULL F / FULL R
+  const neutralHalfPx = THROTTLE_NEUTRAL_BAND * trackH * 0.5; // half band in px
+  const halfH = trackH / 2;
+  const yNeutralTop = trackTop + halfH - neutralHalfPx;
+  const yNeutralBot = trackTop + halfH + neutralHalfPx;
 
-  // Neutral detent band — width matches the physics deadband so the visual
-  // and the feel match. A short-lived "catch pulse" briefly brightens the
-  // band when the lever clicks into neutral.
-  const neutralBandH = Math.max(10, THROTTLE_NEUTRAL_BAND * trackH * 2);
+  // FULL AHEAD zone (above neutral)
+  {
+    const fwdGrad = ctx.createLinearGradient(0, trackTop, 0, yNeutralTop);
+    fwdGrad.addColorStop(0, 'rgba(214, 64, 50, 0.42)');   // red at FULL AHEAD
+    fwdGrad.addColorStop(0.45, 'rgba(220, 140, 60, 0.32)'); // orange middle
+    fwdGrad.addColorStop(1, 'rgba(110, 200, 130, 0.22)'); // greenish near N
+    ctx.fillStyle = fwdGrad;
+    ctx.fillRect(trackLeft - 24, trackTop, trackW + 48, yNeutralTop - trackTop);
+  }
+  // FULL ASTERN zone (below neutral)
+  {
+    const revGrad = ctx.createLinearGradient(0, yNeutralBot, 0, trackTop + trackH);
+    revGrad.addColorStop(0, 'rgba(110, 200, 130, 0.22)'); // greenish near N
+    revGrad.addColorStop(0.55, 'rgba(220, 140, 60, 0.32)'); // orange middle
+    revGrad.addColorStop(1, 'rgba(214, 64, 50, 0.42)');   // red at FULL ASTERN
+    ctx.fillStyle = revGrad;
+    ctx.fillRect(trackLeft - 24, yNeutralBot, trackW + 48, trackTop + trackH - yNeutralBot);
+  }
+
+  // Bright GREEN NEUTRAL ZONE — clearly delineated band in the middle. The
+  // catch pulse briefly brightens it with a yellow-white halo (the "탁").
   const pulse = Math.max(0, Math.min(1, boat.catchPulse / THROTTLE_CATCH_PULSE_TIME));
-  const bandBaseAlpha = 0.32 + pulse * 0.45;
-  ctx.fillStyle = `rgba(180, 195, 215, ${bandBaseAlpha.toFixed(3)})`;
-  ctx.fillRect(
-    trackLeft - 26,
-    trackTop + trackH / 2 - neutralBandH / 2,
-    trackW + 52,
-    neutralBandH
-  );
+  {
+    const nGrad = ctx.createLinearGradient(0, yNeutralTop, 0, yNeutralBot);
+    nGrad.addColorStop(0,    'rgba(70, 200, 120, 0.38)');
+    nGrad.addColorStop(0.5,  `rgba(120, 235, 150, ${(0.62 + pulse * 0.3).toFixed(3)})`);
+    nGrad.addColorStop(1,    'rgba(70, 200, 120, 0.38)');
+    ctx.fillStyle = nGrad;
+    ctx.fillRect(trackLeft - 26, yNeutralTop, trackW + 52, yNeutralBot - yNeutralTop);
+
+    // Boundary lines: solid green stripes marking the edges of N.
+    ctx.strokeStyle = 'rgba(110, 230, 140, 0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(trackLeft - 26, yNeutralTop);
+    ctx.lineTo(trackLeft + trackW + 26, yNeutralTop);
+    ctx.moveTo(trackLeft - 26, yNeutralBot);
+    ctx.lineTo(trackLeft + trackW + 26, yNeutralBot);
+    ctx.stroke();
+  }
   if (pulse > 0) {
-    // Bright halo flash that fades out — the "탁" feedback.
-    ctx.fillStyle = `rgba(255, 240, 180, ${(pulse * 0.55).toFixed(3)})`;
+    // Catch flash — quick warm halo around the N band.
+    ctx.fillStyle = `rgba(255, 246, 200, ${(pulse * 0.55).toFixed(3)})`;
     ctx.fillRect(
       trackLeft - 32,
-      trackTop + trackH / 2 - neutralBandH / 2 - 3,
+      yNeutralTop - 4,
       trackW + 64,
-      neutralBandH + 6
+      (yNeutralBot - yNeutralTop) + 8
     );
   }
 
@@ -791,68 +821,30 @@ function drawThrottleHandle(ctx, w, h, boat) {
   ctx.lineWidth = 1;
   ctx.strokeRect(trackLeft, trackTop, trackW, trackH);
 
-  // Notch lines + labels
-  const notches = [
-    { v: 1,    label: 'FULL', major: true },
-    { v: 2/3,  label: '2/3',  major: false },
-    { v: 1/3,  label: '1/3',  major: false },
-    { v: 0,    label: 'N',    major: true, neutral: true },
-    { v: -1/3, label: '1/3',  major: false },
-    { v: -2/3, label: '2/3',  major: false },
-    { v: -1,   label: 'FULL', major: true },
-  ];
+  // Intermediate notch lines (2/3, 1/3 each way) for finer reference.
+  const minorNotches = [2/3, 1/3, -1/3, -2/3];
   ctx.font = '9px monospace';
   ctx.textAlign = 'left';
-  for (const n of notches) {
-    const y = valueToY(n.v);
-    const halfLen = n.major ? 13 : 8;
-    ctx.strokeStyle = n.major
-      ? 'rgba(225, 240, 250, 0.85)'
-      : 'rgba(180, 200, 215, 0.45)';
-    ctx.lineWidth = n.major ? 2 : 1;
+  for (const v of minorNotches) {
+    const y = valueToY(v);
+    ctx.strokeStyle = 'rgba(180, 200, 215, 0.4)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(trackLeft - halfLen, y);
-    ctx.lineTo(trackLeft + trackW + halfLen, y);
+    ctx.moveTo(trackLeft - 8, y);
+    ctx.lineTo(trackLeft + trackW + 8, y);
     ctx.stroke();
-
-    if (n.neutral) {
-      // Small detent triangles flanking the neutral mark
-      ctx.fillStyle = 'rgba(225, 240, 250, 0.85)';
-      ctx.beginPath();
-      ctx.moveTo(trackLeft - halfLen - 6, y);
-      ctx.lineTo(trackLeft - halfLen, y - 4);
-      ctx.lineTo(trackLeft - halfLen, y + 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(trackLeft + trackW + halfLen + 6, y);
-      ctx.lineTo(trackLeft + trackW + halfLen, y - 4);
-      ctx.lineTo(trackLeft + trackW + halfLen, y + 4);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    ctx.fillStyle = 'rgba(210, 225, 240, 0.55)';
-    ctx.fillText(n.label, trackLeft + trackW + halfLen + 8, y + 3);
+    ctx.fillStyle = 'rgba(210, 225, 240, 0.5)';
+    const label = Math.abs(v) === 1/3 ? '1/3' : '2/3';
+    ctx.fillText(label, trackLeft + trackW + 14, y + 3);
   }
 
-  // AHEAD / ASTERN zone labels (sideways down the left edge).
-  ctx.save();
-  ctx.fillStyle = 'rgba(140, 220, 170, 0.7)';
-  ctx.font = 'bold 9px -apple-system, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.translate(trackLeft - 18, trackTop + trackH * 0.25);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText('AHEAD', 0, 0);
-  ctx.restore();
-  ctx.save();
-  ctx.fillStyle = 'rgba(230, 150, 130, 0.7)';
-  ctx.font = 'bold 9px -apple-system, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.translate(trackLeft - 18, trackTop + trackH * 0.75);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText('ASTERN', 0, 0);
-  ctx.restore();
+  // F / N / R bubble markers on the LEFT of the track — F at top extreme
+  // (Full Ahead), R at bottom (Full Astern), N as a green pill in the
+  // centre of the neutral band. Mirrors a real single-lever marine throttle.
+  const bubbleX = trackCx - 38;
+  drawZoneBubble(ctx, bubbleX, valueToY(1),  'F', '#d63a30', '#7a1a14');
+  drawZoneBubble(ctx, bubbleX, valueToY(0),  'N', '#3fc070', '#1c5e34');
+  drawZoneBubble(ctx, bubbleX, valueToY(-1), 'R', '#d63a30', '#7a1a14');
 
   // Actual (smoothed) throttle — small dot, lags target while engine spools.
   {
@@ -899,6 +891,35 @@ function drawThrottleHandle(ctx, w, h, boat) {
   const pct = (boat.throttleTarget * 100).toFixed(0);
   ctx.fillText(`${pct >= 0 ? '+' : ''}${pct}%`, px + panelW / 2, py + panelH - 8);
 
+  ctx.restore();
+}
+
+function drawZoneBubble(ctx, x, y, letter, fillColor, strokeColor) {
+  ctx.save();
+  // Soft shadow under the bubble for depth.
+  ctx.beginPath();
+  ctx.arc(x, y + 1.5, 11, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.fill();
+  // Bubble body — radial gradient gives it a glassy / button feel.
+  const g = ctx.createRadialGradient(x - 3, y - 3.5, 1, x, y, 10.5);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.18, fillColor);
+  g.addColorStop(1, strokeColor);
+  ctx.beginPath();
+  ctx.arc(x, y, 10.5, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = strokeColor;
+  ctx.stroke();
+  // Letter
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(letter, x, y + 0.6);
+  ctx.textBaseline = 'alphabetic';
   ctx.restore();
 }
 

@@ -2,7 +2,7 @@
 // renderer (to draw the controls) and the input layer (to handle mouse /
 // touch interactions) so both stay in sync.
 
-const PANEL_W = 110;
+const PANEL_W = 130;
 const PANEL_H = 360;
 const PANEL_MARGIN = 16;
 
