@@ -1,4 +1,5 @@
 import { createBoat } from './physics.js';
+import { reseedFromEntities } from './entities.js';
 import {
   WAKE_EMIT_INTERVAL,
   WAKE_LIFETIME,
@@ -11,24 +12,59 @@ import {
   WIND_STREAK_LEN_M,
 } from './constants.js';
 
+const STORAGE_KEY = 'boat_drive.map.v1';
+
 export function createWorld() {
+  const persisted = loadPersisted();
+  const entities = Array.isArray(persisted.entities) ? persisted.entities : [];
+  reseedFromEntities(entities);
+
   return {
     boat: createBoat(0, 0, -Math.PI / 2), // start pointing "up" on screen (−y)
-    entities: [], // future: buoys, markers, race gates, etc.
+    entities,
     wake: [],
     wakeAccumulator: 0,
     time: 0,
     // Environment — configured at runtime via the Settings modal.
-    // fromBearing is METEOROLOGICAL: the compass bearing the wind COMES FROM.
-    // 0 = wind from north (blowing south); 90 = from east; etc.
     wind: {
-      speed: 0,        // m/s
-      fromBearing: 0,  // radians (compass bearing converted to radians)
+      speed: 0,
+      fromBearing: 0,
     },
-    // Drifting visual streaks that show the wind on the water.
     windStreaks: [],
     windStreakSpawnAccum: 0,
+    // Camera: world-space anchor that the renderer centers on. In drive
+    // mode it tracks the boat; in edit mode the user pans it freely.
+    camera: { x: 0, y: 0 },
+    // Map-editor state. `mode` toggles between drive and edit; when in
+    // edit mode the boat physics is paused and mouse / keyboard input is
+    // routed to the editor instead of the throttle / helm.
+    edit: {
+      mode: false,
+      tool: 'select',          // 'select' or one of ENTITY_PRESETS[].id
+      selectedId: null,
+      dragging: false,
+      dragOffset: { x: 0, y: 0 },
+      dirty: false,
+    },
   };
+}
+
+function loadPersisted() {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  return {};
+}
+
+export function saveWorld(world) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const data = { entities: world.entities };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    world.edit.dirty = false;
+  } catch (e) { /* ignore */ }
 }
 
 // Called from the loop after each fixed physics step.
@@ -121,8 +157,8 @@ function spawnWindStreak(world) {
     biasX = Math.sin(wind.fromBearing) * r * 0.35;
     biasY = -Math.cos(wind.fromBearing) * r * 0.35;
   }
-  const x = world.boat.x + biasX + (Math.random() * 2 - 1) * r;
-  const y = world.boat.y + biasY + (Math.random() * 2 - 1) * r;
+  const x = world.camera.x + biasX + (Math.random() * 2 - 1) * r;
+  const y = world.camera.y + biasY + (Math.random() * 2 - 1) * r;
 
   world.windStreaks.push({
     x,

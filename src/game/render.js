@@ -29,11 +29,15 @@ export function createRenderer(canvas) {
     drawWindStreaks(ctx, w, h, world);
     drawWake(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
-    drawBoat(ctx, w, h, world.boat);
-    drawHelm(ctx, w, h, world.boat);
-    drawThrottleHandle(ctx, w, h, world.boat);
+    drawBoat(ctx, w, h, world);
+    if (!world.edit.mode) {
+      drawHelm(ctx, w, h, world.boat);
+      drawThrottleHandle(ctx, w, h, world.boat);
+      drawHints(ctx, w, h);
+    } else {
+      drawEditOverlay(ctx, w, h, world);
+    }
     drawInfoPanel(ctx, w, h, world);
-    drawHints(ctx, w, h);
   }
 
   return { draw };
@@ -43,7 +47,7 @@ export function createRenderer(canvas) {
 
 function drawSea(ctx, w, h, world) {
   const t = world.time;
-  const b = world.boat;
+  const cam = world.camera;
 
   const grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, '#0a3a55');
@@ -51,9 +55,9 @@ function drawSea(ctx, w, h, world) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 
-  // Subtle moving wave bands that scroll with the boat.
-  const camOffX = (b.x * PX_PER_M) % 80;
-  const camOffY = (b.y * PX_PER_M) % 80;
+  // Subtle moving wave bands that scroll with the camera.
+  const camOffX = (cam.x * PX_PER_M) % 80;
+  const camOffY = (cam.y * PX_PER_M) % 80;
   ctx.save();
   ctx.globalAlpha = 0.06;
   ctx.fillStyle = '#bfe7f5';
@@ -95,8 +99,8 @@ function drawWindStreaks(ctx, w, h, world) {
 
   const cx = w / 2;
   const cy = h / 2;
-  const bx = world.boat.x;
-  const by = world.boat.y;
+  const bx = world.camera.x;
+  const by = world.camera.y;
   const t = world.time;
 
   ctx.save();
@@ -145,8 +149,8 @@ function drawWindStreaks(ctx, w, h, world) {
 function drawWake(ctx, w, h, world) {
   const cx = w / 2;
   const cy = h / 2;
-  const bx = world.boat.x;
-  const by = world.boat.y;
+  const bx = world.camera.x;
+  const by = world.camera.y;
 
   ctx.save();
   for (const p of world.wake) {
@@ -165,17 +169,274 @@ function drawWake(ctx, w, h, world) {
   ctx.restore();
 }
 
-// ---------- Entities (reserved for future map editor) ----------
+// ---------- Entities (docks + parked boats placed by the map editor) ----------
 
 function drawEntities(ctx, w, h, world) {
-  void ctx; void w; void h; void world;
+  if (!world.entities || world.entities.length === 0) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const camX = world.camera.x;
+  const camY = world.camera.y;
+
+  for (const e of world.entities) {
+    const sx = cx + (e.x - camX) * PX_PER_M;
+    const sy = cy + (e.y - camY) * PX_PER_M;
+    const maxDim = Math.max(e.length, e.width) * PX_PER_M;
+    // Generous cull to also cover rotation overshoot.
+    if (sx + maxDim < -20 || sx - maxDim > w + 20) continue;
+    if (sy + maxDim < -20 || sy - maxDim > h + 20) continue;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(e.heading);
+
+    if (e.category === 'dock') drawDockEntity(ctx, e);
+    else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
+
+    // Selection highlight + rotation-front indicator.
+    if (world.edit.mode && world.edit.selectedId === e.id) {
+      drawEntitySelectionFrame(ctx, e);
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawDockEntity(ctx, e) {
+  const L = e.length * PX_PER_M;
+  const W = e.width * PX_PER_M;
+  // Wood plank fill.
+  const grad = ctx.createLinearGradient(0, -W / 2, 0, W / 2);
+  grad.addColorStop(0, '#a8845a');
+  grad.addColorStop(0.5, '#896944');
+  grad.addColorStop(1, '#5e472b');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-L / 2, -W / 2, L, W);
+  ctx.strokeStyle = '#2f2415';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(-L / 2, -W / 2, L, W);
+  // Plank grain lines along length.
+  ctx.strokeStyle = 'rgba(40, 28, 14, 0.45)';
+  ctx.lineWidth = 0.6;
+  const plankStripe = Math.max(4, W / 5);
+  for (let py = -W / 2 + plankStripe; py < W / 2 - 0.5; py += plankStripe) {
+    ctx.beginPath();
+    ctx.moveTo(-L / 2 + 1, py);
+    ctx.lineTo(L / 2 - 1, py);
+    ctx.stroke();
+  }
+  // Cross seams every ~2m.
+  ctx.strokeStyle = 'rgba(40, 28, 14, 0.3)';
+  const seam = PX_PER_M * 2;
+  for (let px = -L / 2 + seam; px < L / 2 - 1; px += seam) {
+    ctx.beginPath();
+    ctx.moveTo(px, -W / 2);
+    ctx.lineTo(px, W / 2);
+    ctx.stroke();
+  }
+  // Chrome cleats near the corners (small markers).
+  const cx = L / 2 - Math.min(10, L * 0.08);
+  const cy = W / 2 - Math.min(4, W * 0.18);
+  if (L > 28) {
+    drawDockCleat(ctx,  cx,  cy);
+    drawDockCleat(ctx,  cx, -cy);
+    drawDockCleat(ctx, -cx,  cy);
+    drawDockCleat(ctx, -cx, -cy);
+  }
+}
+
+function drawDockCleat(ctx, x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#d8dde4';
+  ctx.strokeStyle = '#2a3340';
+  ctx.lineWidth = 0.4;
+  ctx.beginPath();
+  roundedRect(ctx, -3, -1, 6, 2, 0.8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStaticBoatEntity(ctx, e) {
+  const L = e.length * PX_PER_M;
+  const W = e.width * PX_PER_M;
+  if (e.hull === 'cat') drawCatamaranSilhouette(ctx, L, W);
+  else drawMonoSilhouette(ctx, L, W, !!e.sail, !!e.cabin);
+}
+
+function drawMonoSilhouette(ctx, L, W, hasSail, hasCabin) {
+  const half = L / 2;
+  const halfW = W / 2;
+  // Hull outline — sharp bow, flat transom.
+  ctx.beginPath();
+  ctx.moveTo(half, 0);
+  ctx.bezierCurveTo(half * 0.9, halfW * 0.35, half * 0.55, halfW * 0.9, half * 0.05, halfW * 0.97);
+  ctx.quadraticCurveTo(-half * 0.55, halfW * 0.95, -half, halfW * 0.65);
+  ctx.lineTo(-half, -halfW * 0.65);
+  ctx.quadraticCurveTo(-half * 0.55, -halfW * 0.95, half * 0.05, -halfW * 0.97);
+  ctx.bezierCurveTo(half * 0.55, -halfW * 0.9, half * 0.9, -halfW * 0.35, half, 0);
+  ctx.closePath();
+  const hullGrad = ctx.createLinearGradient(0, -halfW, 0, halfW);
+  hullGrad.addColorStop(0, '#d5dbe4');
+  hullGrad.addColorStop(0.5, '#eef2f7');
+  hullGrad.addColorStop(1, '#b4bdcb');
+  ctx.fillStyle = hullGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#1f2a3a';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+  // Cockpit/deck inset.
+  ctx.beginPath();
+  const inX = -L * 0.06;
+  ctx.ellipse(inX, 0, half * 0.55, halfW * 0.55, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#2c4760';
+  ctx.fill();
+  ctx.strokeStyle = '#0c1b2a';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // Optional cabin (raised box near amidships).
+  if (hasCabin) {
+    ctx.beginPath();
+    roundedRect(ctx, half * 0.05, -halfW * 0.55, half * 0.45, halfW * 1.1, 3);
+    ctx.fillStyle = '#395470';
+    ctx.fill();
+    ctx.strokeStyle = '#10243a';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    // Windows
+    ctx.fillStyle = 'rgba(160, 210, 235, 0.7)';
+    ctx.fillRect(half * 0.12, -halfW * 0.42, half * 0.32, halfW * 0.16);
+    ctx.fillRect(half * 0.12, halfW * 0.26, half * 0.32, halfW * 0.16);
+  }
+  // Optional sail (triangular jib + mainsail hint).
+  if (hasSail) {
+    ctx.fillStyle = 'rgba(245, 246, 248, 0.92)';
+    ctx.strokeStyle = '#2c3340';
+    ctx.lineWidth = 0.7;
+    // Mainsail — pointing aft (away from bow).
+    ctx.beginPath();
+    ctx.moveTo(half * 0.05, 0);
+    ctx.lineTo(-half * 0.6, halfW * 0.55);
+    ctx.lineTo(-half * 0.6, -halfW * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Mast
+    ctx.fillStyle = '#3a3320';
+    ctx.beginPath();
+    ctx.arc(half * 0.05, 0, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawCatamaranSilhouette(ctx, L, W) {
+  const half = L / 2;
+  const halfW = W / 2;
+  const hullHalfW = Math.max(4, halfW * 0.18);
+  const offset = halfW - hullHalfW;
+
+  for (const sign of [-1, 1]) {
+    const c = sign * offset;
+    ctx.beginPath();
+    ctx.moveTo(half, c);
+    ctx.bezierCurveTo(half * 0.85, c + hullHalfW * 0.4, half * 0.3, c + hullHalfW, -half * 0.7, c + hullHalfW);
+    ctx.lineTo(-half, c + hullHalfW * 0.6);
+    ctx.lineTo(-half, c - hullHalfW * 0.6);
+    ctx.lineTo(-half * 0.7, c - hullHalfW);
+    ctx.bezierCurveTo(half * 0.3, c - hullHalfW, half * 0.85, c - hullHalfW * 0.4, half, c);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, c - hullHalfW, 0, c + hullHalfW);
+    g.addColorStop(0, '#d5dbe4');
+    g.addColorStop(1, '#a9b3c2');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#1f2a3a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  // Cross deck bridging the hulls.
+  ctx.fillStyle = '#3a5876';
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.45, -offset + hullHalfW * 0.3, half * 0.9, (offset - hullHalfW * 0.3) * 2, 3);
+  ctx.fill();
+  ctx.strokeStyle = '#0c1b2a';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+  // Cabin pod centered on bridge deck.
+  ctx.fillStyle = '#2c4760';
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.2, -offset * 0.55, half * 0.5, offset * 1.1, 3);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawEntitySelectionFrame(ctx, e) {
+  const L = e.length * PX_PER_M;
+  const W = e.width * PX_PER_M;
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = 'rgba(255, 220, 90, 0.95)';
+  ctx.lineWidth = 1.6;
+  ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
+  ctx.setLineDash([]);
+  // Bow marker — small triangle on the +x side so you can see the heading.
+  ctx.fillStyle = 'rgba(255, 220, 90, 0.95)';
+  ctx.beginPath();
+  ctx.moveTo(L / 2 + 10, 0);
+  ctx.lineTo(L / 2 + 2, -5);
+  ctx.lineTo(L / 2 + 2, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---------- Edit overlay (instructions on canvas) ----------
+
+function drawEditOverlay(ctx, w, h, world) {
+  // Centered crosshair where mouse clicks would land — visual cue for placement.
+  // (We don't have mouse coords here, so just draw the camera-centered cue.)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 220, 90, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(w / 2 - 16, h / 2);
+  ctx.lineTo(w / 2 + 16, h / 2);
+  ctx.moveTo(w / 2, h / 2 - 16);
+  ctx.lineTo(w / 2, h / 2 + 16);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Edit-mode hints (bottom-left).
+  ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillStyle = 'rgba(230, 244, 251, 0.72)';
+  ctx.textAlign = 'left';
+  const lines = [
+    'EDIT MODE — boat physics paused',
+    'W A S D / ←↑→↓   Pan camera',
+    'Click             Place / select',
+    'Drag              Move selected',
+    'Wheel / [  ]      Rotate selected (±15°)',
+    'Delete            Remove selected',
+    'Esc               Deselect',
+  ];
+  const x = 16;
+  const yTop = h - 16 - (lines.length - 1) * 18 - 6;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], x, yTop + i * 18);
+  }
+  ctx.restore();
+  void world;
 }
 
 // ---------- Boat (small sport bowrider, top-down) ----------
 
-function drawBoat(ctx, w, h, boat) {
-  const cx = w / 2;
-  const cy = h / 2;
+function drawBoat(ctx, w, h, world) {
+  const boat = world.boat;
+  const cam = world.camera;
+  const cx = w / 2 + (boat.x - cam.x) * PX_PER_M;
+  const cy = h / 2 + (boat.y - cam.y) * PX_PER_M;
 
   ctx.save();
   ctx.translate(cx, cy);

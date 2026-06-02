@@ -24,13 +24,12 @@ canvas {
 }
 
 /* ============================================
-   Settings button (top-right, above info panel)
+   HUD buttons (top-right cluster)
    ============================================ */
 
-.settings-btn {
+.hud-btn {
   position: fixed;
   top: 16px;
-  right: 262px; /* clears the 230 px info panel + 16 px margin */
   width: 40px;
   height: 40px;
   border-radius: 10px;
@@ -45,11 +44,103 @@ canvas {
   transition: background 120ms ease, transform 120ms ease;
   z-index: 10;
 }
-.settings-btn:hover {
+.hud-btn:hover {
   background: rgba(20, 60, 90, 0.78);
 }
-.settings-btn:active {
+.hud-btn:active {
   transform: scale(0.96);
+}
+.settings-btn  { right: 262px; }
+.edit-btn      { right: 308px; }
+
+/* ============================================
+   Map editor toolbar (top, full width-ish)
+   ============================================ */
+
+.editor-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  background: linear-gradient(180deg, rgba(20, 40, 56, 0.92), rgba(6, 18, 28, 0.92));
+  border: 1px solid rgba(200, 235, 250, 0.28);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  color: #e6f4fb;
+}
+.editor-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.editor-mode-tag {
+  background: #d6a83a;
+  color: #2a1b00;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-right: 8px;
+}
+.tool-group-label {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: rgba(180, 210, 230, 0.65);
+  padding: 0 4px;
+}
+.tool-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(200, 235, 250, 0.18);
+  margin: 0 6px;
+}
+.tool-spacer {
+  flex: 1 1 auto;
+  min-width: 16px;
+}
+.tool-btn {
+  background: rgba(20, 40, 56, 0.55);
+  border: 1px solid rgba(200, 235, 250, 0.18);
+  color: rgba(220, 240, 250, 0.9);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.tool-btn:hover {
+  background: rgba(34, 70, 96, 0.72);
+  border-color: rgba(200, 235, 250, 0.35);
+}
+.tool-btn.active {
+  background: linear-gradient(180deg, #3a7fa8, #1f5878);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+.tool-btn.primary {
+  background: linear-gradient(180deg, #3da868, #1d7c46);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-weight: 600;
+}
+.tool-btn.primary:hover {
+  background: linear-gradient(180deg, #4cba78, #229152);
+}
+.tool-btn.danger {
+  background: rgba(96, 30, 30, 0.5);
+  border-color: rgba(245, 130, 110, 0.35);
+  color: #f8d8d0;
+}
+.tool-btn.danger:hover {
+  background: rgba(140, 40, 40, 0.7);
 }
 
 /* ============================================

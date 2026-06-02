@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { createWorld } from '@/game/world';
+import { createWorld, saveWorld } from '@/game/world';
 import { createInput } from '@/game/input';
 import { createRenderer } from '@/game/render';
 import { createLoop } from '@/game/loop';
+import { ENTITY_PRESETS } from '@/game/entities';
 
 const KN_TO_MS = 0.514444;
 
@@ -13,8 +14,12 @@ export default function BoatGame() {
   const worldRef = useRef(null);
 
   const [showSettings, setShowSettings] = useState(false);
-  const [windSpeedKn, setWindSpeedKn] = useState(0);   // knots
-  const [windFromDeg, setWindFromDeg] = useState(0);    // compass bearing wind comes FROM
+  const [windSpeedKn, setWindSpeedKn] = useState(0);
+  const [windFromDeg, setWindFromDeg] = useState(0);
+
+  // Editor state — mirrored into world.edit each render.
+  const [editMode, setEditMode] = useState(false);
+  const [editTool, setEditTool] = useState('select');
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,13 +58,40 @@ export default function BoatGame() {
     };
   }, []);
 
-  // Bridge React settings state → mutable world.wind that physics reads each step.
+  // Bridge React settings state → world.wind.
   useEffect(() => {
     const world = worldRef.current;
     if (!world) return;
     world.wind.speed = windSpeedKn * KN_TO_MS;
     world.wind.fromBearing = (windFromDeg * Math.PI) / 180;
   }, [windSpeedKn, windFromDeg]);
+
+  // Bridge React editor state → world.edit. Snap camera back to the boat
+  // when leaving edit mode; freeze it where it is when entering.
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.edit.mode = editMode;
+    if (!editMode) {
+      world.edit.selectedId = null;
+      world.edit.dragging = false;
+      world.camera.x = world.boat.x;
+      world.camera.y = world.boat.y;
+      // Make sure any in-flight work persists.
+      saveWorld(world);
+    } else {
+      // When entering edit mode, also snap throttle to neutral so the boat
+      // isn't sitting with a held command waiting to resume.
+      world.boat.throttleTarget = 0;
+      world.boat.rudderTarget = 0;
+    }
+  }, [editMode]);
+
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.edit.tool = editTool;
+  }, [editTool]);
 
   // ESC closes the modal.
   useEffect(() => {
@@ -71,18 +103,65 @@ export default function BoatGame() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSettings]);
 
+  // Global "E" toggles edit mode (but ignore when typing in a form field).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'e' && e.key !== 'E') return;
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      setEditMode((m) => !m);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <>
       <canvas ref={canvasRef} tabIndex={0} aria-label="Boat drive game" />
-      <button
-        type="button"
-        className="settings-btn"
-        onClick={() => setShowSettings(true)}
-        aria-label="Open settings"
-        title="Settings"
-      >
-        <span aria-hidden="true">⚙</span>
-      </button>
+
+      {!editMode && (
+        <>
+          <button
+            type="button"
+            className="hud-btn edit-btn"
+            onClick={() => setEditMode(true)}
+            aria-label="Enter edit mode"
+            title="Edit map (E)"
+          >
+            ✎
+          </button>
+          <button
+            type="button"
+            className="hud-btn settings-btn"
+            onClick={() => setShowSettings(true)}
+            aria-label="Open settings"
+            title="Settings"
+          >
+            ⚙
+          </button>
+        </>
+      )}
+
+      {editMode && (
+        <EditorToolbar
+          tool={editTool}
+          onTool={setEditTool}
+          onExit={() => setEditMode(false)}
+          onClearAll={() => {
+            const world = worldRef.current;
+            if (!world) return;
+            if (world.entities.length === 0) return;
+            // eslint-disable-next-line no-alert
+            if (window.confirm(`Remove all ${world.entities.length} placed items?`)) {
+              world.entities.length = 0;
+              world.edit.selectedId = null;
+              saveWorld(world);
+            }
+          }}
+        />
+      )}
+
       {showSettings && (
         <SettingsModal
           windSpeedKn={windSpeedKn}
@@ -97,6 +176,59 @@ export default function BoatGame() {
         />
       )}
     </>
+  );
+}
+
+function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
+  const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock');
+  const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
+  return (
+    <div className="editor-bar" role="toolbar" aria-label="Map editor">
+      <div className="editor-bar-row">
+        <span className="editor-mode-tag">EDIT</span>
+        <button
+          type="button"
+          className={`tool-btn ${tool === 'select' ? 'active' : ''}`}
+          onClick={() => onTool('select')}
+          title="Select / move"
+        >
+          <span aria-hidden="true">↖</span> Select
+        </button>
+        <span className="tool-divider" />
+        <span className="tool-group-label">Docks</span>
+        {docks.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            className={`tool-btn ${tool === d.id ? 'active' : ''}`}
+            onClick={() => onTool(d.id)}
+            title={`${d.label} (${d.length}m × ${d.width}m)`}
+          >
+            {d.label}
+          </button>
+        ))}
+        <span className="tool-divider" />
+        <span className="tool-group-label">Boats</span>
+        {boats.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            className={`tool-btn ${tool === b.id ? 'active' : ''}`}
+            onClick={() => onTool(b.id)}
+            title={`${b.label} (${b.length}m × ${b.width}m)`}
+          >
+            {b.label}
+          </button>
+        ))}
+        <span className="tool-spacer" />
+        <button type="button" className="tool-btn danger" onClick={onClearAll} title="Remove all">
+          Clear all
+        </button>
+        <button type="button" className="tool-btn primary" onClick={onExit} title="Exit edit mode (E)">
+          Done
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -200,7 +332,6 @@ function SettingsModal({
 }
 
 function WindPreview({ speedKn, fromDeg }) {
-  // Simple compass diagram showing direction the wind is BLOWING TO.
   const size = 110;
   const r = size / 2 - 8;
   const cx = size / 2;
