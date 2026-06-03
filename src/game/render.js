@@ -262,10 +262,10 @@ function drawStaticBoatEntity(ctx, e) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
   if (e.hull === 'cat') drawCatamaranSilhouette(ctx, L, W);
-  else drawMonoSilhouette(ctx, L, W, !!e.sail, !!e.cabin);
+  else drawMonoSilhouette(ctx, L, W, e.sail, !!e.cabin);
 }
 
-function drawMonoSilhouette(ctx, L, W, hasSail, hasCabin) {
+function drawMonoSilhouette(ctx, L, W, sail, hasCabin) {
   const half = L / 2;
   const halfW = W / 2;
   // Hull outline — sharp bow, flat transom.
@@ -309,25 +309,125 @@ function drawMonoSilhouette(ctx, L, W, hasSail, hasCabin) {
     ctx.fillRect(half * 0.12, -halfW * 0.42, half * 0.32, halfW * 0.16);
     ctx.fillRect(half * 0.12, halfW * 0.26, half * 0.32, halfW * 0.16);
   }
-  // Optional sail (triangular jib + mainsail hint).
-  if (hasSail) {
-    ctx.fillStyle = 'rgba(245, 246, 248, 0.92)';
-    ctx.strokeStyle = '#2c3340';
-    ctx.lineWidth = 0.7;
-    // Mainsail — pointing aft (away from bow).
-    ctx.beginPath();
-    ctx.moveTo(half * 0.05, 0);
-    ctx.lineTo(-half * 0.6, halfW * 0.55);
-    ctx.lineTo(-half * 0.6, -halfW * 0.55);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // Mast
-    ctx.fillStyle = '#3a3320';
-    ctx.beginPath();
-    ctx.arc(half * 0.05, 0, 1.6, 0, Math.PI * 2);
-    ctx.fill();
+  // Rig (mast + sails). `sail` is either truthy boolean (legacy → sloop) or
+  // one of 'dinghy' | 'sloop' | 'ketch' — the rig presets we currently support.
+  if (sail) {
+    const rig = sail === true ? 'sloop' : sail;
+    drawSailRig(ctx, half, halfW, rig);
   }
+}
+
+// Draws a sailing rig in body frame (+x = bow). Sails are filled triangles
+// with a slight bulge — as if caught on the port tack — so they read as
+// "deployed sails" rather than just sticks. Standing rigging (forestay,
+// backstay) shows as faint lines for richer silhouette identification.
+function drawSailRig(ctx, half, halfW, rigType) {
+  const SAIL_FILL   = 'rgba(248, 250, 252, 0.88)';
+  const SAIL_EDGE   = 'rgba(40, 50, 65, 0.7)';
+  const STAY_COLOR  = 'rgba(180, 195, 210, 0.55)';
+  const MAST_COLOR  = '#3d3322';
+
+  function drawSail(ax, ay, bx, by, bulgeAmt) {
+    // Triangle sail from anchor a (mast) to anchor b (clew). Bulges to port
+    // (negative y, since +y is starboard in body frame).
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    const px = -dy / len;
+    const py = dx / len;
+    // py is positive when sail runs aft along centerline → bulge in (px, py)
+    // sense would push to +y (starboard). Flip sign to put bulge on port.
+    const cx = (ax + bx) / 2 - px * bulgeAmt;
+    const cy = (ay + by) / 2 - py * bulgeAmt;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(cx, cy, bx, by);
+    ctx.closePath();
+    ctx.fillStyle = SAIL_FILL;
+    ctx.fill();
+    ctx.strokeStyle = SAIL_EDGE;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+
+  function drawMast(x, r) {
+    ctx.fillStyle = MAST_COLOR;
+    ctx.beginPath();
+    ctx.arc(x, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.lineWidth = 0.4;
+    ctx.stroke();
+  }
+
+  function drawBoom(fromX, toX) {
+    ctx.strokeStyle = MAST_COLOR;
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(fromX, 0);
+    ctx.lineTo(toX, 0);
+    ctx.stroke();
+  }
+
+  function drawStay(fromX, toX) {
+    ctx.strokeStyle = STAY_COLOR;
+    ctx.lineWidth = 0.55;
+    ctx.beginPath();
+    ctx.moveTo(fromX, 0);
+    ctx.lineTo(toX, 0);
+    ctx.stroke();
+  }
+
+  if (rigType === 'dinghy') {
+    // Small training boat — one mast, one sail, no jib.
+    const mastX = half * 0.45;
+    const clewX = -half * 0.55;
+    drawSail(mastX, 0, clewX, 0, halfW * 0.6);
+    drawBoom(mastX, clewX);
+    drawMast(mastX, 1.7);
+    return;
+  }
+
+  if (rigType === 'ketch') {
+    // Two-masted: main forward, mizzen aft. Jib forward of main mast.
+    const bowX = half * 0.93;
+    const mainX = half * 0.30;
+    const mainClewX = -half * 0.10;
+    const mizzenX = -half * 0.40;
+    const mizzenClewX = -half * 0.90;
+
+    drawStay(mainX, bowX);
+    // Jib (between bow and main mast)
+    drawSail(mainX, 0, bowX, 0, halfW * 0.42);
+    // Main sail (between main mast and mizzen)
+    drawSail(mainX, 0, mainClewX, 0, halfW * 0.7);
+    drawBoom(mainX, mainClewX);
+    // Mizzen sail (between mizzen mast and stern)
+    drawSail(mizzenX, 0, mizzenClewX, 0, halfW * 0.55);
+    drawBoom(mizzenX, mizzenClewX);
+    // Masts (main is taller, drawn bigger)
+    drawMast(mainX, 2.4);
+    drawMast(mizzenX, 2.0);
+    return;
+  }
+
+  // Default: sloop — one mast, mainsail aft + jib forward + stays.
+  const mastX = half * 0.22;
+  const bowX = half * 0.92;
+  const sternStay = -half * 0.92;
+  const mainClewX = -half * 0.6;
+
+  drawStay(mastX, bowX);
+  drawStay(mastX, sternStay);
+  // Jib
+  drawSail(mastX, 0, bowX, 0, halfW * 0.48);
+  // Mainsail
+  drawSail(mastX, 0, mainClewX, 0, halfW * 0.72);
+  // Boom along mainsail foot
+  drawBoom(mastX, mainClewX);
+  // Mast
+  drawMast(mastX, 2.2);
 }
 
 function drawCatamaranSilhouette(ctx, L, W) {
