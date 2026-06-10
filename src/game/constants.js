@@ -97,10 +97,9 @@ export const HELM_MAX_ANGLE = Math.PI * 0.75; // ±135°
 export const WIND_COEF = 12;
 export const WIND_ARM = 1.2;
 
-// === Wake ===
+// === Wake (particle system) ===
 export const WAKE_EMIT_INTERVAL = 0.04;
-export const WAKE_LIFETIME = 3.0;
-export const WAKE_MAX_POINTS = 200;
+export const WAKE_MAX_POINTS = 480;
 
 // === Wind streaks (America's Cup broadcast style) ===
 // Sparse white world-space streaks that drift with the wind. Only render

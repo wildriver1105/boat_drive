@@ -3,7 +3,6 @@ import {
   M_TO_KN,
   BOAT_LENGTH,
   BOAT_WIDTH,
-  WAKE_LIFETIME,
   RUDDER_ARM,
   HELM_MAX_ANGLE,
   WIND_STREAK_ALPHA,
@@ -12,10 +11,14 @@ import {
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
 import { throttleLayout, helmLayout } from './ui-layout.js';
+import { createFx, getVignette } from './fx.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
+  const fx = createFx();
+  fx.patA = ctx.createPattern(fx.noiseA, 'repeat');
+  fx.patB = ctx.createPattern(fx.noiseB, 'repeat');
 
   function draw(world) {
     const dpr = canvas._dpr || 1;
@@ -25,11 +28,13 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    drawSea(ctx, w, h, world);
+    drawSea(ctx, w, h, world, fx);
     drawWindStreaks(ctx, w, h, world);
-    drawWake(ctx, w, h, world);
+    drawWake(ctx, w, h, world, fx);
     drawEntities(ctx, w, h, world);
     drawBoat(ctx, w, h, world);
+    // Atmosphere pass: vignette + sun glare over the world, under the HUD.
+    ctx.drawImage(getVignette(fx, w, h), 0, 0, w, h);
     if (!world.edit.mode) {
       drawHelm(ctx, w, h, world.boat);
       drawThrottleHandle(ctx, w, h, world.boat);
@@ -45,43 +50,99 @@ export function createRenderer(canvas) {
 
 // ---------- Sea ----------
 
-function drawSea(ctx, w, h, world) {
+function drawSea(ctx, w, h, world, fx) {
   const t = world.time;
   const cam = world.camera;
+  const camPxX = cam.x * PX_PER_M;
+  const camPxY = cam.y * PX_PER_M;
 
+  // Deep-water base gradient.
   const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#0a3a55');
+  grad.addColorStop(0, '#08344e');
+  grad.addColorStop(0.55, '#0b5174');
   grad.addColorStop(1, '#0e6b8e');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 
-  // Subtle moving wave bands that scroll with the camera.
-  const camOffX = (cam.x * PX_PER_M) % 80;
-  const camOffY = (cam.y * PX_PER_M) % 80;
+  // Two pre-rendered noise layers, world-anchored but drifting in different
+  // directions over time. Their interference shimmers like open water —
+  // the Canvas-2D stand-in for a water shader.
+  drawTileLayer(ctx, fx, fx.patA, w, h, -camPxX + t * 4.2, -camPxY + t * 2.3, 1.0, 0.5);
+  drawTileLayer(ctx, fx, fx.patB, w, h, -camPxX - t * 2.7, -camPxY + t * 5.4, 1.9, 0.55);
+
+  // Long soft swell bands rolling slowly through the scene.
   ctx.save();
-  ctx.globalAlpha = 0.06;
-  ctx.fillStyle = '#bfe7f5';
-  for (let i = -2; i < Math.ceil(h / 80) + 2; i++) {
-    const y = i * 80 - camOffY + Math.sin(t * 0.6 + i * 0.7) * 6;
-    ctx.fillRect(-camOffX - 40, y, w + 120, 2);
+  ctx.globalAlpha = 0.045;
+  ctx.fillStyle = '#cfeefb';
+  const bandSpacing = 130;
+  let bandOff = (camPxY - t * 14) % bandSpacing;
+  if (bandOff < 0) bandOff += bandSpacing;
+  for (let i = -1; i < Math.ceil(h / bandSpacing) + 1; i++) {
+    const y = i * bandSpacing - bandOff + Math.sin(t * 0.5 + i * 1.3) * 9;
+    ctx.fillRect(0, y, w, 3);
   }
   ctx.restore();
 
+  // World-anchored twinkling sun sparkles.
+  drawSparkles(ctx, w, h, camPxX, camPxY, t);
+}
+
+// Fill the viewport with a repeating pre-rendered tile, offset by (offX, offY)
+// screen pixels and scaled. The offset is reduced modulo the tile period so
+// coordinates stay small no matter how far the boat travels.
+function drawTileLayer(ctx, fx, pattern, w, h, offX, offY, scale, alpha) {
+  if (!pattern) return;
+  const tile = fx.tileSize * scale;
+  const mx = ((offX % tile) + tile) % tile;
+  const my = ((offY % tile) + tile) % tile;
   ctx.save();
-  ctx.globalAlpha = 0.12;
-  ctx.strokeStyle = '#cbeaf6';
-  ctx.lineWidth = 1.5;
-  for (let i = 0; i < 32; i++) {
-    const seed = i * 73.13;
-    const px = ((seed + t * 14) % (w + 80)) - 40;
-    const py = ((seed * 1.7 + t * 9) % (h + 80)) - 40;
-    const len = 6 + (i % 3) * 3;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(px + len, py);
-    ctx.stroke();
+  ctx.globalAlpha = alpha;
+  ctx.translate(mx - tile, my - tile);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = pattern;
+  ctx.fillRect(0, 0, (w + 2 * tile) / scale, (h + 2 * tile) / scale);
+  ctx.restore();
+}
+
+// Stable grid-hash sparkles: each ~96px world cell owns one glint with its
+// own phase. They twinkle in place and scroll with the world — cheap and
+// far more convincing than screen-space drifting dashes.
+function drawSparkles(ctx, w, h, camPxX, camPxY, t) {
+  const G = 96;
+  const left = camPxX - w / 2;
+  const top = camPxY - h / 2;
+  const gx0 = Math.floor(left / G) - 1;
+  const gy0 = Math.floor(top / G) - 1;
+  const gx1 = Math.floor((left + w) / G) + 1;
+  const gy1 = Math.floor((top + h) / G) + 1;
+
+  ctx.save();
+  ctx.strokeStyle = '#eaf8ff';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 1.1;
+  for (let gx = gx0; gx <= gx1; gx++) {
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const n1 = Math.sin(gx * 127.1 + gy * 311.7) * 43758.5453;
+      const h1 = n1 - Math.floor(n1);
+      const n2 = Math.sin(gx * 269.5 + gy * 183.3) * 28001.8384;
+      const h2 = n2 - Math.floor(n2);
+      const tw = Math.sin(t * (0.8 + h2 * 1.6) + h1 * 6.283);
+      if (tw < 0.55) continue;
+      const a = ((tw - 0.55) / 0.45) ** 2 * 0.55;
+      const sx = gx * G + h1 * G - left;
+      const sy = gy * G + h2 * G - top;
+      const r = 1.5 + h2 * 2.5;
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.moveTo(sx - r, sy);
+      ctx.lineTo(sx + r, sy);
+      ctx.moveTo(sx, sy - r * 0.7);
+      ctx.lineTo(sx, sy + r * 0.7);
+      ctx.stroke();
+    }
   }
   ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 // ---------- Wind streaks (America's Cup broadcast style) ----------
@@ -146,27 +207,30 @@ function drawWindStreaks(ctx, w, h, world) {
 
 // ---------- Wake ----------
 
-function drawWake(ctx, w, h, world) {
+function drawWake(ctx, w, h, world, fx) {
   const cx = w / 2;
   const cy = h / 2;
-  const bx = world.camera.x;
-  const by = world.camera.y;
+  const camX = world.camera.x;
+  const camY = world.camera.y;
+  const t = world.time;
 
   ctx.save();
   for (const p of world.wake) {
-    const age = world.time - p.born;
-    const a = 1 - age / WAKE_LIFETIME;
-    if (a <= 0) continue;
-    const screenX = cx + (p.x - bx) * PX_PER_M;
-    const screenY = cy + (p.y - by) * PX_PER_M;
-    const r = 2 + age * 6;
-    ctx.globalAlpha = 0.35 * a;
-    ctx.fillStyle = '#eaf6fb';
-    ctx.beginPath();
-    ctx.arc(screenX, screenY, r, 0, Math.PI * 2);
-    ctx.fill();
+    const age = t - p.born;
+    const u = age / p.lifetime;
+    if (u <= 0 || u >= 1) continue;
+    // Quick fade-in, slow fade-out.
+    const env = u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85;
+    const sizeM = p.size0 + p.grow * age;
+    const px = cx + (p.x - camX) * PX_PER_M;
+    const py = cy + (p.y - camY) * PX_PER_M;
+    const r = sizeM * PX_PER_M;
+    if (px + r < 0 || px - r > w || py + r < 0 || py - r > h) continue;
+    ctx.globalAlpha = p.alpha * env;
+    ctx.drawImage(fx.foam, px - r, py - r, r * 2, r * 2);
   }
   ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 // ---------- Entities (docks + parked boats placed by the map editor) ----------
@@ -205,6 +269,12 @@ function drawEntities(ctx, w, h, world) {
 function drawDockEntity(ctx, e) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
+  // Drop shadow on the water under the deck.
+  ctx.save();
+  ctx.translate(2.5, 4);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+  ctx.fillRect(-L / 2, -W / 2, L, W);
+  ctx.restore();
   // Wood plank fill.
   const grad = ctx.createLinearGradient(0, -W / 2, 0, W / 2);
   grad.addColorStop(0, '#a8845a');
@@ -243,6 +313,23 @@ function drawDockEntity(ctx, e) {
     drawDockCleat(ctx, -cx,  cy);
     drawDockCleat(ctx, -cx, -cy);
   }
+  // Pilings — wooden posts at the corners (mid-span too on long docks).
+  const pilingXs = [-L / 2 + 4, L / 2 - 4];
+  if (L > 120) pilingXs.push(0);
+  for (const px of pilingXs) {
+    for (const py of [-W / 2, W / 2]) {
+      const pg = ctx.createRadialGradient(px - 1.2, py - 1.2, 0.5, px, py, 4.5);
+      pg.addColorStop(0, '#a8845a');
+      pg.addColorStop(1, '#3c2c18');
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#170f06';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+  }
 }
 
 function drawDockCleat(ctx, x, y) {
@@ -261,6 +348,16 @@ function drawDockCleat(ctx, x, y) {
 function drawStaticBoatEntity(ctx, e) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
+  // Soft hull shadow on the water.
+  ctx.save();
+  ctx.translate(2, 3.5);
+  ctx.globalAlpha = 0.24;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, (L / 2) * 1.02, (W / 2) * 1.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
   if (e.hull === 'cat') drawCatamaranSilhouette(ctx, L, W);
   else drawMonoSilhouette(ctx, L, W, e.sail, !!e.cabin);
 }
@@ -547,11 +644,15 @@ function drawBoat(ctx, w, h, world) {
   const half = L / 2;
   const halfW = W / 2;
 
-  // Soft shadow underneath the hull for depth against the water.
+  // Two-pass soft shadow underneath the hull — a wide faint pass plus a
+  // tighter darker one approximates a blurred drop shadow cheaply.
   ctx.save();
-  ctx.translate(0, 2);
-  hullOutlinePath(ctx, half * 1.01, halfW * 1.04);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+  ctx.translate(2.5, 4);
+  hullOutlinePath(ctx, half * 1.06, halfW * 1.2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.10)';
+  ctx.fill();
+  hullOutlinePath(ctx, half * 1.01, halfW * 1.05);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
   ctx.fill();
   ctx.restore();
 
@@ -580,6 +681,15 @@ function drawBoat(ctx, w, h, world) {
   hullOutlinePath(ctx, half - 2, halfW - 1.8);
   ctx.strokeStyle = '#1f4a76';
   ctx.lineWidth = 2.2;
+  ctx.stroke();
+  // Gloss highlight sweeping along the port sheer line — gives the
+  // fiberglass a curved, light-catching look.
+  ctx.beginPath();
+  ctx.moveTo(half * 0.8, -halfW * 0.25);
+  ctx.quadraticCurveTo(0, -halfW * 0.78, -half * 0.85, -halfW * 0.5);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
   ctx.stroke();
   ctx.restore();
 

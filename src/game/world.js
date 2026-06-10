@@ -2,8 +2,8 @@ import { createBoat } from './physics.js';
 import { reseedFromEntities } from './entities.js';
 import {
   WAKE_EMIT_INTERVAL,
-  WAKE_LIFETIME,
   WAKE_MAX_POINTS,
+  THROTTLE_NEUTRAL_BAND,
   WIND_STREAK_MAX,
   WIND_STREAK_LIFETIME,
   WIND_STREAK_SPAWN_RADIUS_M,
@@ -67,29 +67,120 @@ export function saveWorld(world) {
   } catch (e) { /* ignore */ }
 }
 
-// Called from the loop after each fixed physics step.
-// Emits wake points behind the boat and ages out old ones.
+// Called from the loop after each fixed physics step. Maintains the wake
+// particle system: every particle is a textured foam blob sitting in the
+// water with its own velocity, growth and lifetime. The combination of
+// emitters below produces the full wake picture:
+//   • stern foam   — turbulent centre trail behind a moving hull
+//   • Kelvin arms  — paired particles drifting laterally outward, so the
+//                    trail widens into the classic V shape over time
+//   • prop wash    — churn behind the motor whenever the clutch is engaged,
+//                    even at zero boat speed (essential docking feedback)
+//   • bow spray    — small splashes peeling off the bow shoulders at speed
 export function updateTrails(world, dt) {
   world.time += dt;
-  world.wakeAccumulator += dt;
+  const b = world.boat;
+  const speed = Math.hypot(b.vx, b.vy);
+  const cosH = Math.cos(b.heading);
+  const sinH = Math.sin(b.heading);
 
-  const speed = Math.hypot(world.boat.vx, world.boat.vy);
-  if (world.wakeAccumulator >= WAKE_EMIT_INTERVAL && speed > 0.4) {
+  world.wakeAccumulator += dt;
+  if (world.wakeAccumulator >= WAKE_EMIT_INTERVAL) {
     world.wakeAccumulator = 0;
-    const b = world.boat;
-    // Emit at the stern (a couple of meters behind the boat center).
-    const sx = b.x - Math.cos(b.heading) * 2.5;
-    const sy = b.y - Math.sin(b.heading) * 2.5;
-    world.wake.push({ x: sx, y: sy, born: world.time });
-    if (world.wake.length > WAKE_MAX_POINTS) {
-      world.wake.splice(0, world.wake.length - WAKE_MAX_POINTS);
+    emitWakeParticles(world, b, speed, cosH, sinH);
+  }
+
+  // Advance particles; water friction bleeds their velocity away.
+  const damp = Math.exp(-1.6 * dt);
+  const t = world.time;
+  for (let i = world.wake.length - 1; i >= 0; i--) {
+    const p = world.wake[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= damp;
+    p.vy *= damp;
+    if (t - p.born >= p.lifetime) world.wake.splice(i, 1);
+  }
+  if (world.wake.length > WAKE_MAX_POINTS) {
+    world.wake.splice(0, world.wake.length - WAKE_MAX_POINTS);
+  }
+}
+
+function emitWakeParticles(world, b, speed, cosH, sinH) {
+  const t = world.time;
+  // Lateral unit vector (body +y = starboard) in world coords.
+  const latX = -sinH;
+  const latY = cosH;
+
+  // Stern foam + Kelvin V arms while the hull is moving through water.
+  if (speed > 0.6) {
+    const sx = b.x - cosH * 2.4;
+    const sy = b.y - sinH * 2.4;
+    world.wake.push({
+      x: sx + (Math.random() - 0.5) * 0.8,
+      y: sy + (Math.random() - 0.5) * 0.8,
+      vx: latX * (Math.random() - 0.5) * 0.6,
+      vy: latY * (Math.random() - 0.5) * 0.6,
+      born: t,
+      lifetime: 2.2 + Math.random() * 1.4,
+      size0: 0.9 + speed * 0.07,
+      grow: 1.1 + Math.random() * 0.8,
+      alpha: Math.min(0.6, 0.22 + speed * 0.05),
+    });
+    // V arms: lateral drift makes the trail widen into a wake fan.
+    const armSpeed = 0.45 + speed * 0.06;
+    for (const side of [-1, 1]) {
+      world.wake.push({
+        x: sx,
+        y: sy,
+        vx: latX * armSpeed * side,
+        vy: latY * armSpeed * side,
+        born: t,
+        lifetime: 1.8 + Math.random() * 0.9,
+        size0: 0.5,
+        grow: 0.8,
+        alpha: Math.min(0.38, 0.12 + speed * 0.04),
+      });
     }
   }
 
-  // Drop expired wake points.
-  const cutoff = world.time - WAKE_LIFETIME;
-  while (world.wake.length && world.wake[0].born < cutoff) {
-    world.wake.shift();
+  // Bow spray at planing-ish speeds.
+  if (speed > 3.5) {
+    const bx = b.x + cosH * 2.6;
+    const by = b.y + sinH * 2.6;
+    for (const side of [-1, 1]) {
+      if (Math.random() < 0.75) {
+        world.wake.push({
+          x: bx + latX * side * 0.9,
+          y: by + latY * side * 0.9,
+          vx: latX * side * (0.8 + speed * 0.12) + b.vx * 0.25,
+          vy: latY * side * (0.8 + speed * 0.12) + b.vy * 0.25,
+          born: t,
+          lifetime: 0.5 + Math.random() * 0.4,
+          size0: 0.35,
+          grow: 1.4,
+          alpha: Math.min(0.5, 0.1 + speed * 0.05),
+        });
+      }
+    }
+  }
+
+  // Prop wash — fires whenever the gearbox is engaged, including at rest.
+  if (Math.abs(b.throttle) > THROTTLE_NEUTRAL_BAND) {
+    const px = b.x - cosH * 3.1;
+    const py = b.y - sinH * 3.1;
+    const dir = b.throttle > 0 ? -1 : 1; // thrust forward → wash aft
+    world.wake.push({
+      x: px + (Math.random() - 0.5) * 0.5,
+      y: py + (Math.random() - 0.5) * 0.5,
+      vx: cosH * dir * (1.5 + Math.random()) + latX * (Math.random() - 0.5) * 0.8,
+      vy: sinH * dir * (1.5 + Math.random()) + latY * (Math.random() - 0.5) * 0.8,
+      born: t,
+      lifetime: 0.7 + Math.random() * 0.5,
+      size0: 0.5,
+      grow: 2.0,
+      alpha: 0.45 * Math.min(1, Math.abs(b.throttle) + 0.25),
+    });
   }
 }
 
