@@ -347,224 +347,794 @@ function drawDockCleat(ctx, x, y) {
 function drawStaticBoatEntity(ctx, e) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
-  // Soft hull shadow on the water.
+  const half = L / 2;
+  const halfW = W / 2;
+  const accent = pickAccent(e);
+  const rig = e.sail === true ? 'sloop' : e.sail;
+
+  // Hull-shaped soft shadow on the water.
   ctx.save();
-  ctx.translate(2, 3.5);
-  ctx.globalAlpha = 0.24;
+  ctx.translate(2.2, 3.8);
+  ctx.globalAlpha = 0.22;
   ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.ellipse(0, 0, (L / 2) * 1.02, (W / 2) * 1.12, 0, 0, Math.PI * 2);
-  ctx.fill();
+  if (e.hull === 'cat') {
+    const hullHalfW = Math.max(5, halfW * 0.17);
+    const off = halfW - hullHalfW;
+    catHullPath(ctx, half, hullHalfW, -off);
+    ctx.fill();
+    catHullPath(ctx, half, hullHalfW, off);
+    ctx.fill();
+  } else if (rig) {
+    sailHullPath(ctx, half, halfW);
+    ctx.fill();
+  } else {
+    entityHullPath(ctx, half, halfW);
+    ctx.fill();
+  }
   ctx.restore();
   ctx.globalAlpha = 1;
-  if (e.hull === 'cat') drawCatamaranSilhouette(ctx, L, W);
-  else drawMonoSilhouette(ctx, L, W, e.sail, !!e.cabin);
+
+  if (e.hull === 'cat') drawCatamaranTop(ctx, L, W, accent);
+  else if (rig) drawSailboatTop(ctx, L, W, rig, accent);
+  else drawMotorboatTop(ctx, L, W, e, accent);
 }
 
-function drawMonoSilhouette(ctx, L, W, sail, hasCabin) {
-  const half = L / 2;
-  const halfW = W / 2;
-  // Hull outline — sharp bow, flat transom.
+// Stable per-entity hull color so a marina full of boats doesn't look like
+// clones. Hash of the entity id picks from a small paint palette.
+const HULL_PALETTES = [
+  { top: '#e8edf3', mid: '#ffffff', low: '#bfc9d6', stripe: '#1f4a76' }, // white / navy
+  { top: '#e8edf3', mid: '#fdfefe', low: '#bcc7d4', stripe: '#8f2422' }, // white / red
+  { top: '#2c5577', mid: '#3e6e96', low: '#1b3a55', stripe: '#e9f0f6' }, // navy hull
+  { top: '#7c2730', mid: '#94333d', low: '#581a21', stripe: '#f0e7d4' }, // burgundy hull
+  { top: '#23635a', mid: '#2f7d71', low: '#174740', stripe: '#ece4cf' }, // racing green
+  { top: '#efe9d6', mid: '#f9f5e8', low: '#cfc6ab', stripe: '#26425e' }, // cream / navy
+];
+
+function entityHash01(e, salt) {
+  let h = 2166136261 ^ salt;
+  const s = String(e.id || e.presetId || 'x');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h % 1000) / 1000;
+}
+
+function pickAccent(e) {
+  const idx = Math.floor(entityHash01(e, 7) * HULL_PALETTES.length);
+  return HULL_PALETTES[idx % HULL_PALETTES.length];
+}
+
+// ---- Entity hull outline paths (body frame, +x = bow) ----
+
+// Planing motorboat: full bow flare, beamy midships, flat transom.
+function entityHullPath(ctx, half, halfW) {
   ctx.beginPath();
   ctx.moveTo(half, 0);
-  ctx.bezierCurveTo(half * 0.9, halfW * 0.35, half * 0.55, halfW * 0.9, half * 0.05, halfW * 0.97);
-  ctx.quadraticCurveTo(-half * 0.55, halfW * 0.95, -half, halfW * 0.65);
-  ctx.lineTo(-half, -halfW * 0.65);
-  ctx.quadraticCurveTo(-half * 0.55, -halfW * 0.95, half * 0.05, -halfW * 0.97);
-  ctx.bezierCurveTo(half * 0.55, -halfW * 0.9, half * 0.9, -halfW * 0.35, half, 0);
+  ctx.bezierCurveTo(half * 0.92, halfW * 0.38, half * 0.55, halfW * 0.92, half * 0.1, halfW * 0.98);
+  ctx.quadraticCurveTo(-half * 0.5, halfW * 1.0, -half * 0.85, halfW * 0.88);
+  ctx.quadraticCurveTo(-half, halfW * 0.78, -half, halfW * 0.6);
+  ctx.lineTo(-half, -halfW * 0.6);
+  ctx.quadraticCurveTo(-half, -halfW * 0.78, -half * 0.85, -halfW * 0.88);
+  ctx.quadraticCurveTo(-half * 0.5, -halfW * 1.0, half * 0.1, -halfW * 0.98);
+  ctx.bezierCurveTo(half * 0.55, -halfW * 0.92, half * 0.92, -halfW * 0.38, half, 0);
   ctx.closePath();
-  const hullGrad = ctx.createLinearGradient(0, -halfW, 0, halfW);
-  hullGrad.addColorStop(0, '#d5dbe4');
-  hullGrad.addColorStop(0.5, '#eef2f7');
-  hullGrad.addColorStop(1, '#b4bdcb');
-  ctx.fillStyle = hullGrad;
-  ctx.fill();
-  ctx.strokeStyle = '#1f2a3a';
-  ctx.lineWidth = 1.1;
-  ctx.stroke();
-  // Cockpit/deck inset.
+}
+
+// Sailing yacht: finer entry, max beam aft of midships, narrow counter stern.
+function sailHullPath(ctx, half, halfW) {
   ctx.beginPath();
-  const inX = -L * 0.06;
-  ctx.ellipse(inX, 0, half * 0.55, halfW * 0.55, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#2c4760';
+  ctx.moveTo(half, 0);
+  ctx.bezierCurveTo(half * 0.82, halfW * 0.5, half * 0.28, halfW * 0.96, -half * 0.15, halfW * 0.94);
+  ctx.quadraticCurveTo(-half * 0.7, halfW * 0.78, -half, halfW * 0.4);
+  ctx.lineTo(-half, -halfW * 0.4);
+  ctx.quadraticCurveTo(-half * 0.7, -halfW * 0.78, -half * 0.15, -halfW * 0.94);
+  ctx.bezierCurveTo(half * 0.28, -halfW * 0.96, half * 0.82, -halfW * 0.5, half, 0);
+  ctx.closePath();
+}
+
+// Single catamaran hull (slender) centered on body-frame y = cy.
+function catHullPath(ctx, half, hullHalfW, cy) {
+  ctx.beginPath();
+  ctx.moveTo(half, cy);
+  ctx.bezierCurveTo(half * 0.85, cy + hullHalfW * 0.45, half * 0.3, cy + hullHalfW, -half * 0.7, cy + hullHalfW);
+  ctx.quadraticCurveTo(-half * 0.95, cy + hullHalfW * 0.9, -half, cy + hullHalfW * 0.55);
+  ctx.lineTo(-half, cy - hullHalfW * 0.55);
+  ctx.quadraticCurveTo(-half * 0.95, cy - hullHalfW * 0.9, -half * 0.7, cy - hullHalfW);
+  ctx.bezierCurveTo(half * 0.3, cy - hullHalfW, half * 0.85, cy - hullHalfW * 0.45, half, cy);
+  ctx.closePath();
+}
+
+// ---- Shared entity hardware ----
+
+function drawTinyCleat(ctx, x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#dadfe6';
+  ctx.strokeStyle = '#2a3340';
+  ctx.lineWidth = 0.4;
+  ctx.beginPath();
+  roundedRect(ctx, -2.4, -0.8, 4.8, 1.6, 0.7);
   ctx.fill();
-  ctx.strokeStyle = '#0c1b2a';
-  ctx.lineWidth = 0.8;
   ctx.stroke();
-  // Optional cabin (raised box near amidships).
-  if (hasCabin) {
-    ctx.beginPath();
-    roundedRect(ctx, half * 0.05, -halfW * 0.55, half * 0.45, halfW * 1.1, 3);
-    ctx.fillStyle = '#395470';
-    ctx.fill();
-    ctx.strokeStyle = '#10243a';
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-    // Windows
-    ctx.fillStyle = 'rgba(160, 210, 235, 0.7)';
-    ctx.fillRect(half * 0.12, -halfW * 0.42, half * 0.32, halfW * 0.16);
-    ctx.fillRect(half * 0.12, halfW * 0.26, half * 0.32, halfW * 0.16);
-  }
-  // Rig (mast + sails). `sail` is either truthy boolean (legacy → sloop) or
-  // one of 'dinghy' | 'sloop' | 'ketch' — the rig presets we currently support.
-  if (sail) {
-    const rig = sail === true ? 'sloop' : sail;
-    drawSailRig(ctx, half, halfW, rig);
-  }
+  ctx.restore();
 }
 
-// Draws a sailing rig in body frame (+x = bow). Sails are filled triangles
-// with a slight bulge — as if caught on the port tack — so they read as
-// "deployed sails" rather than just sticks. Standing rigging (forestay,
-// backstay) shows as faint lines for richer silhouette identification.
-function drawSailRig(ctx, half, halfW, rigType) {
-  const SAIL_FILL   = 'rgba(248, 250, 252, 0.88)';
-  const SAIL_EDGE   = 'rgba(40, 50, 65, 0.7)';
-  const STAY_COLOR  = 'rgba(180, 195, 210, 0.55)';
-  const MAST_COLOR  = '#3d3322';
-
-  function drawSail(ax, ay, bx, by, bulgeAmt) {
-    // Triangle sail from anchor a (mast) to anchor b (clew). Bulges to port
-    // (negative y, since +y is starboard in body frame).
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len = Math.hypot(dx, dy) || 1;
-    const px = -dy / len;
-    const py = dx / len;
-    // py is positive when sail runs aft along centerline → bulge in (px, py)
-    // sense would push to +y (starboard). Flip sign to put bulge on port.
-    const cx = (ax + bx) / 2 - px * bulgeAmt;
-    const cy = (ay + by) / 2 - py * bulgeAmt;
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cx, cy, bx, by);
-    ctx.closePath();
-    ctx.fillStyle = SAIL_FILL;
-    ctx.fill();
-    ctx.strokeStyle = SAIL_EDGE;
-    ctx.lineWidth = 0.7;
-    ctx.stroke();
-  }
-
-  function drawMast(x, r) {
-    ctx.fillStyle = MAST_COLOR;
-    ctx.beginPath();
-    ctx.arc(x, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.lineWidth = 0.4;
-    ctx.stroke();
-  }
-
-  function drawBoom(fromX, toX) {
-    ctx.strokeStyle = MAST_COLOR;
-    ctx.lineWidth = 1.4;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(fromX, 0);
-    ctx.lineTo(toX, 0);
-    ctx.stroke();
-  }
-
-  function drawStay(fromX, toX) {
-    ctx.strokeStyle = STAY_COLOR;
-    ctx.lineWidth = 0.55;
-    ctx.beginPath();
-    ctx.moveTo(fromX, 0);
-    ctx.lineTo(toX, 0);
-    ctx.stroke();
-  }
-
-  if (rigType === 'dinghy') {
-    // Small training boat — one mast, one sail, no jib.
-    const mastX = half * 0.45;
-    const clewX = -half * 0.55;
-    drawSail(mastX, 0, clewX, 0, halfW * 0.6);
-    drawBoom(mastX, clewX);
-    drawMast(mastX, 1.7);
-    return;
-  }
-
-  if (rigType === 'ketch') {
-    // Two-masted: main forward, mizzen aft. Jib forward of main mast.
-    const bowX = half * 0.93;
-    const mainX = half * 0.30;
-    const mainClewX = -half * 0.10;
-    const mizzenX = -half * 0.40;
-    const mizzenClewX = -half * 0.90;
-
-    drawStay(mainX, bowX);
-    // Jib (between bow and main mast)
-    drawSail(mainX, 0, bowX, 0, halfW * 0.42);
-    // Main sail (between main mast and mizzen)
-    drawSail(mainX, 0, mainClewX, 0, halfW * 0.7);
-    drawBoom(mainX, mainClewX);
-    // Mizzen sail (between mizzen mast and stern)
-    drawSail(mizzenX, 0, mizzenClewX, 0, halfW * 0.55);
-    drawBoom(mizzenX, mizzenClewX);
-    // Masts (main is taller, drawn bigger)
-    drawMast(mainX, 2.4);
-    drawMast(mizzenX, 2.0);
-    return;
-  }
-
-  // Default: sloop — one mast, mainsail aft + jib forward + stays.
-  const mastX = half * 0.22;
-  const bowX = half * 0.92;
-  const sternStay = -half * 0.92;
-  const mainClewX = -half * 0.6;
-
-  drawStay(mastX, bowX);
-  drawStay(mastX, sternStay);
-  // Jib
-  drawSail(mastX, 0, bowX, 0, halfW * 0.48);
-  // Mainsail
-  drawSail(mastX, 0, mainClewX, 0, halfW * 0.72);
-  // Boom along mainsail foot
-  drawBoom(mastX, mainClewX);
-  // Mast
-  drawMast(mastX, 2.2);
+function drawParkedOutboard(ctx, half) {
+  ctx.save();
+  ctx.translate(-half, 0);
+  ctx.beginPath();
+  roundedRect(ctx, -9, -3.4, 8.4, 6.8, 2.4);
+  const g = ctx.createLinearGradient(0, -3.4, 0, 3.4);
+  g.addColorStop(0, '#2e3a48');
+  g.addColorStop(1, '#10161e');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = '#05080d';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  ctx.fillStyle = '#d6342e';
+  ctx.fillRect(-8.4, -0.7, 7.2, 1.4);
+  ctx.restore();
 }
 
-function drawCatamaranSilhouette(ctx, L, W) {
+function drawEntitySeat(ctx, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#384354';
+  ctx.strokeStyle = '#141c28';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  roundedRect(ctx, -s * 0.8, -s * 0.5, s * 0.3, s, 1.5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#5a6878';
+  ctx.beginPath();
+  roundedRect(ctx, -s * 0.5, -s * 0.5, s, s, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMotorboatTop(ctx, L, W, e, accent) {
   const half = L / 2;
   const halfW = W / 2;
-  const hullHalfW = Math.max(4, halfW * 0.18);
-  const offset = halfW - hullHalfW;
+  const hasCabin = !!e.cabin;
 
-  for (const sign of [-1, 1]) {
-    const c = sign * offset;
+  // Outboard motor for open boats (under the transom edge).
+  if (!hasCabin) drawParkedOutboard(ctx, half);
+
+  // Hull topsides.
+  entityHullPath(ctx, half, halfW);
+  const g = ctx.createLinearGradient(0, -halfW, 0, halfW);
+  g.addColorStop(0, accent.top);
+  g.addColorStop(0.5, accent.mid);
+  g.addColorStop(1, accent.low);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(14, 22, 34, 0.9)';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+
+  // Rubrail stripe + gloss highlight, clipped to the hull.
+  ctx.save();
+  entityHullPath(ctx, half, halfW);
+  ctx.clip();
+  entityHullPath(ctx, half - 2, halfW - 1.6);
+  ctx.strokeStyle = accent.stripe;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(half * 0.78, -halfW * 0.28);
+  ctx.quadraticCurveTo(0, -halfW * 0.8, -half * 0.8, -halfW * 0.55);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.restore();
+
+  if (hasCabin) drawCruiserTopsides(ctx, half, halfW, e);
+  else drawOpenBoatTopsides(ctx, half, halfW, e);
+
+  // Corner cleats.
+  drawTinyCleat(ctx, half * 0.5, halfW * 0.8);
+  drawTinyCleat(ctx, half * 0.5, -halfW * 0.8);
+  drawTinyCleat(ctx, -half * 0.8, halfW * 0.78);
+  drawTinyCleat(ctx, -half * 0.8, -halfW * 0.78);
+}
+
+// Open motorboats: dinghy (bench thwarts) and runabout (windshield + seats).
+function drawOpenBoatTopsides(ctx, half, halfW, e) {
+  const isRunabout = e.length >= 5;
+  const fdAft = isRunabout ? half * 0.2 : half * 0.45;
+
+  // Cockpit floor.
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.86, -halfW * 0.68, fdAft + half * 0.86 - 2, halfW * 1.36, 5);
+  ctx.fillStyle = '#26405b';
+  ctx.fill();
+  ctx.strokeStyle = '#0d1f31';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // Foredeck wedge with center seam.
+  ctx.beginPath();
+  ctx.moveTo(half - 1.5, 0);
+  ctx.bezierCurveTo(half * 0.85, halfW * 0.32, half * 0.55, halfW * 0.72, fdAft, halfW * 0.7);
+  ctx.lineTo(fdAft, -halfW * 0.7);
+  ctx.bezierCurveTo(half * 0.55, -halfW * 0.72, half * 0.85, -halfW * 0.32, half - 1.5, 0);
+  ctx.closePath();
+  const fg = ctx.createLinearGradient(0, -halfW, 0, halfW);
+  fg.addColorStop(0, '#dde4ec');
+  fg.addColorStop(0.5, '#f4f8fb');
+  fg.addColorStop(1, '#c3cdd9');
+  ctx.fillStyle = fg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(20, 36, 56, 0.5)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(half - 3, 0);
+  ctx.lineTo(fdAft + 2, 0);
+  ctx.strokeStyle = 'rgba(20, 36, 56, 0.3)';
+  ctx.stroke();
+
+  if (isRunabout) {
+    // Curved windshield at the cockpit front.
     ctx.beginPath();
-    ctx.moveTo(half, c);
-    ctx.bezierCurveTo(half * 0.85, c + hullHalfW * 0.4, half * 0.3, c + hullHalfW, -half * 0.7, c + hullHalfW);
-    ctx.lineTo(-half, c + hullHalfW * 0.6);
-    ctx.lineTo(-half, c - hullHalfW * 0.6);
-    ctx.lineTo(-half * 0.7, c - hullHalfW);
-    ctx.bezierCurveTo(half * 0.3, c - hullHalfW, half * 0.85, c - hullHalfW * 0.4, half, c);
-    ctx.closePath();
-    const g = ctx.createLinearGradient(0, c - hullHalfW, 0, c + hullHalfW);
-    g.addColorStop(0, '#d5dbe4');
-    g.addColorStop(1, '#a9b3c2');
-    ctx.fillStyle = g;
+    ctx.moveTo(fdAft, -halfW * 0.66);
+    ctx.bezierCurveTo(fdAft + half * 0.1, -halfW * 0.4, fdAft + half * 0.1, halfW * 0.4, fdAft, halfW * 0.66);
+    ctx.strokeStyle = '#16242f';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(150, 205, 235, 0.75)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    // Helm console (port side, just aft of the windshield).
+    ctx.fillStyle = '#11192a';
+    ctx.strokeStyle = '#04070f';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    roundedRect(ctx, fdAft - half * 0.14, -halfW * 0.5, half * 0.1, halfW * 0.32, 1.5);
     ctx.fill();
-    ctx.strokeStyle = '#1f2a3a';
-    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Captain + passenger seats, stern bench.
+    drawEntitySeat(ctx, -half * 0.08, -halfW * 0.36, halfW * 0.4);
+    drawEntitySeat(ctx, -half * 0.08, halfW * 0.36, halfW * 0.4);
+    ctx.fillStyle = '#5a6878';
+    ctx.strokeStyle = '#141c28';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    roundedRect(ctx, -half * 0.8, -halfW * 0.5, half * 0.12, halfW, 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // Dinghy: two wooden thwart benches across the hull.
+    ctx.fillStyle = '#b8915a';
+    ctx.strokeStyle = '#4a3318';
+    ctx.lineWidth = 0.6;
+    for (const tx of [half * 0.05, -half * 0.45]) {
+      ctx.beginPath();
+      roundedRect(ctx, tx - 2.2, -halfW * 0.6, 4.4, halfW * 1.2, 1.5);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+}
+
+// Cabin cruisers and yachts: superstructure, glass, rails, radar arch.
+function drawCruiserTopsides(ctx, half, halfW, e) {
+  const isYacht = e.length >= 15;
+
+  // Aft cockpit.
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.86, -halfW * 0.6, half * 0.36, halfW * 1.2, 4);
+  ctx.fillStyle = '#243c55';
+  ctx.fill();
+  ctx.strokeStyle = '#0d1f31';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // Stern bench.
+  ctx.fillStyle = '#5a6878';
+  ctx.strokeStyle = '#141c28';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.84, -halfW * 0.48, half * 0.08, halfW * 0.96, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Foredeck seam, anchor hatch, skylight hatches.
+  ctx.strokeStyle = 'rgba(20, 36, 56, 0.35)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(half * 0.96, 0);
+  ctx.lineTo(half * 0.38, 0);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(70, 88, 108, 0.7)';
+  ctx.strokeStyle = 'rgba(15, 26, 40, 0.7)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  roundedRect(ctx, half * 0.74, -halfW * 0.12, half * 0.12, halfW * 0.24, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(140, 190, 220, 0.55)';
+  ctx.beginPath();
+  roundedRect(ctx, half * 0.5, -halfW * 0.18, half * 0.1, halfW * 0.36, 2);
+  ctx.fill();
+  ctx.stroke();
+  if (isYacht) {
+    ctx.beginPath();
+    roundedRect(ctx, half * 0.62, -halfW * 0.18, half * 0.08, halfW * 0.36, 2);
+    ctx.fill();
     ctx.stroke();
   }
-  // Cross deck bridging the hulls.
-  ctx.fillStyle = '#3a5876';
+
+  // Cabin superstructure.
+  const cabFwd = half * 0.34;
+  const cabAft = -half * 0.48;
+  const cabHalf = halfW * 0.7;
   ctx.beginPath();
-  roundedRect(ctx, -half * 0.45, -offset + hullHalfW * 0.3, half * 0.9, (offset - hullHalfW * 0.3) * 2, 3);
+  roundedRect(ctx, cabAft, -cabHalf, cabFwd - cabAft, cabHalf * 2, 6);
+  const cg = ctx.createLinearGradient(0, -cabHalf, 0, cabHalf);
+  cg.addColorStop(0, '#eef1f5');
+  cg.addColorStop(0.5, '#f9fbfd');
+  cg.addColorStop(1, '#c7d1dd');
+  ctx.fillStyle = cg;
   ctx.fill();
-  ctx.strokeStyle = '#0c1b2a';
+  ctx.strokeStyle = 'rgba(18, 30, 44, 0.8)';
   ctx.lineWidth = 0.9;
   ctx.stroke();
-  // Cabin pod centered on bridge deck.
-  ctx.fillStyle = '#2c4760';
+
+  // Raked front windshield (curved glass band).
   ctx.beginPath();
-  roundedRect(ctx, -half * 0.2, -offset * 0.55, half * 0.5, offset * 1.1, 3);
+  ctx.moveTo(cabFwd - 1, -cabHalf * 0.85);
+  ctx.quadraticCurveTo(cabFwd + half * 0.09, 0, cabFwd - 1, cabHalf * 0.85);
+  ctx.strokeStyle = '#16242f';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(150, 205, 235, 0.8)';
+  ctx.lineWidth = 1.7;
+  ctx.stroke();
+
+  // Side window strips along both cabin edges.
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cabFwd - half * 0.05, s * (cabHalf - 1.6));
+    ctx.lineTo(cabAft + half * 0.06, s * (cabHalf - 1.6));
+    ctx.strokeStyle = 'rgba(20, 32, 44, 0.85)';
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+    ctx.setLineDash([6, 3]);
+    ctx.strokeStyle = 'rgba(140, 195, 225, 0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Roof skylight.
+  ctx.fillStyle = 'rgba(120, 170, 200, 0.4)';
+  ctx.strokeStyle = 'rgba(18, 30, 44, 0.6)';
+  ctx.lineWidth = 0.7;
+  ctx.beginPath();
+  roundedRect(ctx, (cabFwd + cabAft) / 2 - half * 0.05, -cabHalf * 0.3, half * 0.1, cabHalf * 0.6, 2);
   ctx.fill();
   ctx.stroke();
+
+  // Radar arch + dome at the cabin aft end.
+  ctx.strokeStyle = '#1a2836';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cabAft + 2, -cabHalf * 0.9);
+  ctx.lineTo(cabAft + 2, cabHalf * 0.9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cabAft + 2, 0, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#e8edf2';
+  ctx.fill();
+  ctx.strokeStyle = '#39434f';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // Yacht-only flybridge with helm seat.
+  if (isYacht) {
+    ctx.beginPath();
+    roundedRect(ctx, cabAft + half * 0.08, -cabHalf * 0.55, half * 0.26, cabHalf * 1.1, 4);
+    ctx.fillStyle = 'rgba(228, 235, 242, 0.95)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(18, 30, 44, 0.7)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    drawEntitySeat(ctx, cabAft + half * 0.18, 0, cabHalf * 0.34);
+  }
+
+  // Bow rails with stanchions.
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(half * 0.95, s * halfW * 0.12);
+    ctx.quadraticCurveTo(half * 0.55, s * halfW * 0.72, cabFwd, s * halfW * 0.8);
+    ctx.strokeStyle = 'rgba(235, 242, 248, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(235, 242, 248, 0.9)';
+    for (const [px, py] of [
+      [half * 0.85, halfW * 0.3],
+      [half * 0.65, halfW * 0.58],
+      [half * 0.45, halfW * 0.75],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(px, s * py, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+// Detailed sailboat: teak deck, coachroof, cockpit well, shrouds, then a
+// shaded rig with sail shadows cast on the deck.
+function drawSailboatTop(ctx, L, W, rig, accent) {
+  const half = L / 2;
+  const halfW = W / 2;
+  const isDinghy = rig === 'dinghy';
+  const mastX = isDinghy ? half * 0.45 : rig === 'ketch' ? half * 0.30 : half * 0.22;
+
+  // Hull topsides.
+  sailHullPath(ctx, half, halfW);
+  const g = ctx.createLinearGradient(0, -halfW, 0, halfW);
+  g.addColorStop(0, accent.top);
+  g.addColorStop(0.5, accent.mid);
+  g.addColorStop(1, accent.low);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(14, 22, 34, 0.9)';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+
+  // Teak deck inside the toe rail, with curved plank lines.
+  ctx.save();
+  sailHullPath(ctx, half - 2, halfW - 2);
+  ctx.clip();
+  const wg = ctx.createLinearGradient(0, -halfW, 0, halfW);
+  wg.addColorStop(0, '#c9a26a');
+  wg.addColorStop(0.5, '#b8915a');
+  wg.addColorStop(1, '#9a7549');
+  ctx.fillStyle = wg;
+  ctx.fillRect(-half, -halfW, half * 2, halfW * 2);
+  ctx.strokeStyle = 'rgba(60, 40, 18, 0.35)';
+  ctx.lineWidth = 0.5;
+  for (let i = -3; i <= 3; i++) {
+    const py = (i / 3.5) * halfW;
+    ctx.beginPath();
+    ctx.moveTo(half * 0.95, py * 0.2);
+    ctx.quadraticCurveTo(0, py * 1.05, -half * 0.97, py * 0.75);
+    ctx.stroke();
+  }
+  ctx.restore();
+  // Toe rail.
+  sailHullPath(ctx, half - 2, halfW - 2);
+  ctx.strokeStyle = 'rgba(50, 32, 14, 0.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if (isDinghy) {
+    // Open cockpit with a wooden thwart.
+    ctx.beginPath();
+    roundedRect(ctx, -half * 0.7, -halfW * 0.55, half * 1.1, halfW * 1.1, 4);
+    ctx.fillStyle = '#26405b';
+    ctx.fill();
+    ctx.strokeStyle = '#0d1f31';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.fillStyle = '#b8915a';
+    ctx.strokeStyle = '#4a3318';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    roundedRect(ctx, -half * 0.15, -halfW * 0.55, 4.5, halfW * 1.1, 1.5);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // Coachroof (cabin top) between mast and cockpit.
+    const crFwd = mastX + half * 0.12;
+    const crAft = -half * 0.3;
+    ctx.beginPath();
+    roundedRect(ctx, crAft, -halfW * 0.58, crFwd - crAft, halfW * 1.16, 5);
+    const cg = ctx.createLinearGradient(0, -halfW * 0.58, 0, halfW * 0.58);
+    cg.addColorStop(0, '#eef1f5');
+    cg.addColorStop(0.5, '#f9fbfd');
+    cg.addColorStop(1, '#ccd5e0');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20, 32, 48, 0.7)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    // Side window strips.
+    ctx.strokeStyle = 'rgba(30, 46, 60, 0.85)';
+    ctx.lineWidth = 1.8;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(crFwd - 3, s * halfW * 0.46);
+      ctx.lineTo(crAft + 4, s * halfW * 0.46);
+      ctx.stroke();
+    }
+    // Skylight hatch.
+    ctx.fillStyle = 'rgba(130, 180, 210, 0.5)';
+    ctx.strokeStyle = 'rgba(20, 32, 48, 0.6)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    roundedRect(ctx, crFwd - half * 0.14, -halfW * 0.16, half * 0.1, halfW * 0.32, 1.5);
+    ctx.fill();
+    ctx.stroke();
+    // Cockpit well near the stern.
+    ctx.beginPath();
+    roundedRect(ctx, -half * 0.78, -halfW * 0.42, half * 0.4, halfW * 0.84, 4);
+    ctx.fillStyle = '#26405b';
+    ctx.fill();
+    ctx.strokeStyle = '#0d1f31';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  }
+
+  // Shrouds anchoring the mast to both gunwales.
+  ctx.strokeStyle = 'rgba(200, 215, 228, 0.5)';
+  ctx.lineWidth = 0.55;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(mastX, 0);
+    ctx.lineTo(mastX - half * 0.05, s * (halfW - 3));
+    ctx.stroke();
+  }
+
+  drawSailRig(ctx, half, halfW, rig);
+}
+
+// Sailing rig in body frame (+x = bow). Sails bulge to port as if caught on
+// a light starboard-tack breeze. Each sail gets: a soft shadow cast on the
+// deck, a luff→leech shading gradient, and radial panel seams — that's what
+// lifts them off the "paper cutout" look.
+function drawSailRig(ctx, half, halfW, rigType) {
+  const sails = [];
+  const masts = [];
+  const booms = [];
+  const stays = [];
+
+  if (rigType === 'dinghy') {
+    sails.push(makeSail(half * 0.45, -half * 0.55, halfW * 0.6));
+    booms.push([half * 0.45, -half * 0.55]);
+    masts.push([half * 0.45, 1.7]);
+  } else if (rigType === 'ketch') {
+    stays.push([half * 0.30, half * 0.93]);
+    sails.push(makeSail(half * 0.30, half * 0.93, halfW * 0.42)); // jib
+    sails.push(makeSail(half * 0.30, -half * 0.10, halfW * 0.7)); // main
+    sails.push(makeSail(-half * 0.40, -half * 0.90, halfW * 0.55)); // mizzen
+    booms.push([half * 0.30, -half * 0.10], [-half * 0.40, -half * 0.90]);
+    masts.push([half * 0.30, 2.4], [-half * 0.40, 2.0]);
+  } else {
+    stays.push([half * 0.22, half * 0.92], [half * 0.22, -half * 0.92]);
+    sails.push(makeSail(half * 0.22, half * 0.92, halfW * 0.48)); // jib
+    sails.push(makeSail(half * 0.22, -half * 0.6, halfW * 0.72)); // main
+    booms.push([half * 0.22, -half * 0.6]);
+    masts.push([half * 0.22, 2.2]);
+  }
+
+  // Standing rigging.
+  ctx.strokeStyle = 'rgba(180, 195, 210, 0.55)';
+  ctx.lineWidth = 0.55;
+  for (const [fromX, toX] of stays) {
+    ctx.beginPath();
+    ctx.moveTo(fromX, 0);
+    ctx.lineTo(toX, 0);
+    ctx.stroke();
+  }
+
+  // Sail shadows cast onto the deck.
+  ctx.save();
+  ctx.translate(2.2, 3.4);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+  for (const s of sails) {
+    pathSail(ctx, s);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Sails: gradient from bright luff to shaded leech, plus panel seams.
+  for (const s of sails) {
+    pathSail(ctx, s);
+    const sg = ctx.createLinearGradient(s.ax, s.ay, s.bx, s.by);
+    sg.addColorStop(0, 'rgba(255, 255, 254, 0.95)');
+    sg.addColorStop(0.55, 'rgba(244, 247, 249, 0.93)');
+    sg.addColorStop(1, 'rgba(206, 215, 222, 0.92)');
+    ctx.fillStyle = sg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40, 50, 65, 0.7)';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+    // Panel seams radiating from the clew.
+    ctx.strokeStyle = 'rgba(70, 85, 100, 0.25)';
+    ctx.lineWidth = 0.5;
+    for (const t of [0.3, 0.55, 0.8]) {
+      const qx = (1 - t) * (1 - t) * s.ax + 2 * (1 - t) * t * s.cx + t * t * s.bx;
+      const qy = (1 - t) * (1 - t) * s.ay + 2 * (1 - t) * t * s.cy + t * t * s.by;
+      ctx.beginPath();
+      ctx.moveTo(s.bx, s.by);
+      ctx.lineTo(qx, qy);
+      ctx.stroke();
+    }
+  }
+
+  // Booms along the sail feet.
+  ctx.strokeStyle = '#3d3322';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  for (const [fromX, toX] of booms) {
+    ctx.beginPath();
+    ctx.moveTo(fromX, 0);
+    ctx.lineTo(toX, 0);
+    ctx.stroke();
+  }
+
+  // Masts — brushed aluminum discs.
+  for (const [x, r] of masts) {
+    const mg = ctx.createRadialGradient(x - r * 0.4, -r * 0.4, 0.3, x, 0, r);
+    mg.addColorStop(0, '#eef1f4');
+    mg.addColorStop(0.6, '#9aa4ae');
+    mg.addColorStop(1, '#5a636d');
+    ctx.beginPath();
+    ctx.arc(x, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = mg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(10, 14, 20, 0.8)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+}
+
+// Sail geometry: anchor a = (ax, 0) at the mast/tack, b = (bx, 0) at the
+// clew/head, with a quadratic control point. All sails bulge to port
+// (−y) so the whole rig reads as set on the same tack.
+function makeSail(ax, bx, bulge) {
+  return {
+    ax, ay: 0, bx, by: 0,
+    cx: (ax + bx) / 2,
+    cy: -bulge,
+  };
+}
+
+function pathSail(ctx, s) {
+  ctx.beginPath();
+  ctx.moveTo(s.ax, s.ay);
+  ctx.quadraticCurveTo(s.cx, s.cy, s.bx, s.by);
+  ctx.closePath();
+}
+
+function drawCatamaranTop(ctx, L, W, accent) {
+  const half = L / 2;
+  const halfW = W / 2;
+  const hullHalfW = Math.max(5, halfW * 0.17);
+  const off = halfW - hullHalfW;
+
+  // Crossbeams connecting the hulls (under the deck structures).
+  ctx.fillStyle = '#28323f';
+  ctx.fillRect(-half * 0.62, -off, half * 0.1, off * 2);
+  ctx.fillRect(half * 0.5, -off, half * 0.08, off * 2);
+
+  // Twin hulls with gradient + gloss.
+  for (const sign of [-1, 1]) {
+    const c = sign * off;
+    catHullPath(ctx, half, hullHalfW, c);
+    const g = ctx.createLinearGradient(0, c - hullHalfW, 0, c + hullHalfW);
+    g.addColorStop(0, accent.top);
+    g.addColorStop(0.5, accent.mid);
+    g.addColorStop(1, accent.low);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(14, 22, 34, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.save();
+    catHullPath(ctx, half, hullHalfW, c);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(half * 0.85, c - hullHalfW * 0.2);
+    ctx.quadraticCurveTo(0, c - hullHalfW * 0.65, -half * 0.8, c - hullHalfW * 0.35);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Forward trampoline — taut mesh netting between the bows.
+  const trampFwd = half * 0.82;
+  const trampAft = half * 0.16;
+  const trampHalf = off - hullHalfW * 0.4;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(trampFwd, -trampHalf * 0.35);
+  ctx.lineTo(trampAft, -trampHalf);
+  ctx.lineTo(trampAft, trampHalf);
+  ctx.lineTo(trampFwd, trampHalf * 0.35);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(8, 14, 22, 0.5)';
+  ctx.fill();
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(190, 205, 218, 0.28)';
+  ctx.lineWidth = 0.5;
+  for (let i = -6; i <= 6; i++) {
+    ctx.beginPath();
+    ctx.moveTo(trampAft, (i / 6) * trampHalf);
+    ctx.lineTo(trampFwd, (i / 6) * trampHalf * 0.35);
+    ctx.stroke();
+  }
+  for (let k = 0; k <= 6; k++) {
+    const x = trampAft + ((trampFwd - trampAft) * k) / 6;
+    const sc = 1 - (0.65 * (x - trampAft)) / (trampFwd - trampAft);
+    ctx.beginPath();
+    ctx.moveTo(x, -trampHalf * sc);
+    ctx.lineTo(x, trampHalf * sc);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.beginPath();
+  ctx.moveTo(trampFwd, -trampHalf * 0.35);
+  ctx.lineTo(trampAft, -trampHalf);
+  ctx.lineTo(trampAft, trampHalf);
+  ctx.lineTo(trampFwd, trampHalf * 0.35);
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(20, 30, 42, 0.8)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // Bridge deck spanning the hulls aft of the trampoline.
+  ctx.beginPath();
+  roundedRect(ctx, -half * 0.78, -(off - hullHalfW * 0.25), half * 0.94, (off - hullHalfW * 0.25) * 2, 5);
+  const bg = ctx.createLinearGradient(0, -off, 0, off);
+  bg.addColorStop(0, '#dfe6ee');
+  bg.addColorStop(0.5, '#f2f6fa');
+  bg.addColorStop(1, '#c3cdd9');
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(18, 30, 44, 0.75)';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // Cabin pod with a wrap-around front window.
+  const cabFwd = half * 0.05;
+  const cabAft = -half * 0.5;
+  const cabHalf = off * 0.62;
+  ctx.beginPath();
+  roundedRect(ctx, cabAft, -cabHalf, cabFwd - cabAft, cabHalf * 2, 6);
+  const cg = ctx.createLinearGradient(0, -cabHalf, 0, cabHalf);
+  cg.addColorStop(0, '#eef1f5');
+  cg.addColorStop(0.5, '#f9fbfd');
+  cg.addColorStop(1, '#c7d1dd');
+  ctx.fillStyle = cg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(18, 30, 44, 0.8)';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+  // Wrap window band at the cabin front.
+  ctx.beginPath();
+  ctx.moveTo(cabFwd - 2, -cabHalf * 0.75);
+  ctx.quadraticCurveTo(cabFwd + half * 0.07, 0, cabFwd - 2, cabHalf * 0.75);
+  ctx.strokeStyle = '#16242f';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(150, 205, 235, 0.8)';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  // Side window strips.
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cabFwd - half * 0.04, s * (cabHalf - 1.5));
+    ctx.lineTo(cabAft + half * 0.05, s * (cabHalf - 1.5));
+    ctx.strokeStyle = 'rgba(20, 32, 44, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Aft helm seat on the bridge deck.
+  drawEntitySeat(ctx, -half * 0.64, 0, Math.max(6, off * 0.36));
 }
 
 function drawEntitySelectionFrame(ctx, e) {
