@@ -97,6 +97,18 @@ export const HELM_MAX_ANGLE = Math.PI * 0.75; // ±135°
 export const WIND_COEF = 12;
 export const WIND_ARM = 1.2;
 
+// === Collisions ===
+// Parked boats get mass from their footprint so bigger hulls are harder to
+// shove. The player boat (MASS=1500 over 6×2.2 m) is ~115 kg/m² — use the
+// same density so pushing feels consistent. Docks are immovable (infinite
+// mass) — the solver gives them invMass = 0.
+export const ENTITY_DENSITY = 115;          // kg per m² of footprint
+export const COLLISION_RESTITUTION = 0.22;  // bounciness (boats are fendered, not billiard balls)
+export const COLLISION_FRICTION = 0.35;     // tangential grip during contact
+export const COLLISION_CORRECTION = 0.8;    // fraction of penetration removed per step
+export const ENTITY_LIN_DAMP = 0.9;         // 1/s — pushed boats bleed speed into the water
+export const ENTITY_ANG_DAMP = 1.5;         // 1/s — and stop spinning fairly quickly
+
 // === Wake (particle system) ===
 export const WAKE_EMIT_INTERVAL = 0.04;
 export const WAKE_MAX_POINTS = 480;

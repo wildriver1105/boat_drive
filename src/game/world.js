@@ -61,7 +61,10 @@ function loadPersisted() {
 export function saveWorld(world) {
   if (typeof localStorage === 'undefined') return;
   try {
-    const data = { entities: world.entities };
+    // Strip transient dynamics (vx/vy/omega from collision shoves) — the
+    // map file stores only pose and identity.
+    const entities = world.entities.map(({ vx, vy, omega, ...rest }) => rest);
+    const data = { entities };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     world.edit.dirty = false;
   } catch (e) { /* ignore */ }

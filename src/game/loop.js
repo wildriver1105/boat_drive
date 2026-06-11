@@ -1,8 +1,10 @@
 import { stepBoat } from './physics.js';
-import { updateTrails, updateWindStreaks } from './world.js';
+import { updateTrails, updateWindStreaks, saveWorld } from './world.js';
+import { stepEntities, resolveCollisions } from './collisions.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from './constants.js';
 
 const EDIT_PAN_SPEED = 28; // m/s — how fast WASD pans the camera when editing
+const AUTOSAVE_DEBOUNCE = 2; // s — persist pushed-around entities after things settle
 
 // Drives the simulation with a fixed-dt accumulator so the physics is
 // deterministic regardless of frame rate. Rendering happens once per
@@ -12,6 +14,8 @@ export function createLoop({ world, input, render }) {
   let lastTs = 0;
   let accumulator = 0;
   let running = false;
+  let entitiesDirty = false;
+  let saveTimer = 0;
 
   function frame(ts) {
     if (!running) return;
@@ -29,6 +33,11 @@ export function createLoop({ world, input, render }) {
         panEditCamera(world, keys, FIXED_DT);
       } else {
         stepBoat(world.boat, keys, world.wind, FIXED_DT);
+        // Pushed entities keep drifting; then settle all contacts (boat ↔
+        // entity, entity ↔ entity; docks are immovable).
+        const moved = stepEntities(world, FIXED_DT);
+        const touched = resolveCollisions(world);
+        if (moved || touched) entitiesDirty = true;
         // Drive mode: camera glues to the boat each step.
         world.camera.x = world.boat.x;
         world.camera.y = world.boat.y;
@@ -40,6 +49,19 @@ export function createLoop({ world, input, render }) {
       steps += 1;
     }
     if (steps >= MAX_STEPS_PER_FRAME) accumulator = 0;
+
+    // Debounced autosave so shoved boats keep their new positions across
+    // reloads without hammering localStorage every frame.
+    if (entitiesDirty) {
+      saveTimer += dt;
+      if (saveTimer >= AUTOSAVE_DEBOUNCE) {
+        saveWorld(world);
+        entitiesDirty = false;
+        saveTimer = 0;
+      }
+    } else {
+      saveTimer = 0;
+    }
 
     render(world);
     rafId = requestAnimationFrame(frame);
