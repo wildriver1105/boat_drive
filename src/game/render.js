@@ -3,7 +3,6 @@ import {
   M_TO_KN,
   BOAT_LENGTH,
   BOAT_WIDTH,
-  RUDDER_ARM,
   HELM_MAX_ANGLE,
   WIND_STREAK_ALPHA,
   THROTTLE_NEUTRAL_BAND,
@@ -656,9 +655,10 @@ function drawBoat(ctx, w, h, world) {
   ctx.fill();
   ctx.restore();
 
-  // 1) Outboard motor — drawn BEFORE the hull so the transom edge sits on top
-  //    of the mount, and so the cowling extends behind the boat cleanly.
-  drawOutboardMotor(ctx, half, boat.rudder);
+  // 1) Rudder — transom-hung blade, drawn BEFORE the hull so the stock and
+  //    mounting hardware tuck under the transom edge. (The engine is the
+  //    inboard compartment inside the cockpit; this is the steering foil.)
+  drawRudder(ctx, half, boat.rudder);
 
   // 2) Hull — fiberglass white with a side-to-side gradient for shading.
   hullOutlinePath(ctx, half, halfW);
@@ -898,46 +898,110 @@ function foredeckPath(ctx, half, halfW) {
 
 // ---- Boat detail pieces ----
 
-function drawOutboardMotor(ctx, half, rudderActual) {
-  // The motor pivots on the transom and steers the boat. It rotates with
-  // the actual (smoothed) rudder value — same source as the physics.
+function drawRudder(ctx, half, rudderActual) {
+  // Transom-hung rudder. The whole assembly pivots about the rudder stock
+  // with the actual (smoothed) rudder value — same source as the physics.
+  // Top-down view: a symmetric hydrofoil blade trailing aft of the stock,
+  // widest near the leading edge and tapering to the trailing edge.
+
+  // Mounting hardware drawn UN-rotated: gudgeon plate bolted to the transom.
   ctx.save();
   ctx.translate(-half, 0);
-  ctx.rotate(rudderActual * 0.6); // visual swing up to ~35°
 
-  // Transom bracket (clamps to the hull, sits half over the transom edge).
-  ctx.fillStyle = '#2a3445';
-  ctx.strokeStyle = '#0a0d14';
-  ctx.lineWidth = 0.8;
+  ctx.fillStyle = '#39434f';
+  ctx.strokeStyle = '#10151c';
+  ctx.lineWidth = 0.7;
   ctx.beginPath();
-  ctx.rect(-1.5, -3.5, 5, 7);
+  roundedRect(ctx, -1.5, -4.5, 4, 9, 1.2);
   ctx.fill();
   ctx.stroke();
+  // Bolt heads on the plate.
+  ctx.fillStyle = '#9aa6b4';
+  for (const by of [-3, 3]) {
+    ctx.beginPath();
+    ctx.arc(0.5, by, 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  // Powerhead cowling (engine housing) hanging aft of the bracket.
-  ctx.beginPath();
-  ctx.ellipse(-11, 0, 7.5, 5, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#161d28';
+  // Rotating assembly: stock + blade + tiller link.
+  ctx.save();
+  ctx.translate(-2, 0); // stock sits just aft of the transom
+  ctx.rotate(rudderActual * 0.6); // visual deflection up to ~35°
+
+  const chord = 26;  // blade length aft of the stock (px ≈ 1.3 m)
+  const thick = 8;   // max foil thickness
+
+  // Submerged shadow of the blade (offset, soft) — reads as underwater depth.
+  ctx.save();
+  ctx.translate(1.5, 2.2);
+  ctx.globalAlpha = 0.25;
+  rudderFoilPath(ctx, chord, thick);
+  ctx.fillStyle = '#000';
   ctx.fill();
-  ctx.strokeStyle = '#04070d';
+  ctx.restore();
+
+  // Blade — slightly translucent dark foil so it reads as below the surface.
+  rudderFoilPath(ctx, chord, thick);
+  const bladeGrad = ctx.createLinearGradient(0, -thick / 2, 0, thick / 2);
+  bladeGrad.addColorStop(0, 'rgba(52, 66, 82, 0.92)');
+  bladeGrad.addColorStop(0.5, 'rgba(30, 40, 52, 0.92)');
+  bladeGrad.addColorStop(1, 'rgba(16, 22, 30, 0.92)');
+  ctx.fillStyle = bladeGrad;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(8, 12, 18, 0.9)';
   ctx.lineWidth = 0.9;
   ctx.stroke();
 
-  // Brand color stripe along the cowling.
-  ctx.fillStyle = '#d6342e';
-  ctx.fillRect(-17.5, -0.8, 13, 1.5);
-
-  // Air intake panel.
-  ctx.fillStyle = '#3b4554';
+  // Centerline crease of the foil (catching a bit of light).
   ctx.beginPath();
-  ctx.ellipse(-9, 0, 2.2, 1.2, 0, 0, Math.PI * 2);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-chord + 3, 0);
+  ctx.strokeStyle = 'rgba(160, 185, 205, 0.35)';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+
+  // Rudder stock — stainless pivot post.
+  const stockGrad = ctx.createRadialGradient(-0.8, -0.8, 0.3, 0, 0, 3);
+  stockGrad.addColorStop(0, '#e8edf2');
+  stockGrad.addColorStop(0.6, '#9aa6b4');
+  stockGrad.addColorStop(1, '#454f5c');
+  ctx.beginPath();
+  ctx.arc(0, 0, 2.6, 0, Math.PI * 2);
+  ctx.fillStyle = stockGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#10151c';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+
+  // Tiller link arm reaching forward through the transom (steering linkage).
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(6.5, 0);
+  ctx.strokeStyle = '#222b36';
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(6.5, 0, 1.1, 0, Math.PI * 2);
+  ctx.fillStyle = '#9aa6b4';
   ctx.fill();
 
-  // Lower-unit cavitation plate (small horizontal fin under cowling).
-  ctx.fillStyle = '#0c1018';
-  ctx.fillRect(-15, -0.4, 4, 0.8);
+  ctx.restore(); // rotating assembly
+  ctx.restore(); // transom frame
+}
 
-  ctx.restore();
+// Symmetric hydrofoil outline: rounded leading edge at the stock, max
+// thickness ~30% chord, tapering to a narrow squared-off trailing edge.
+function rudderFoilPath(ctx, chord, thick) {
+  const t2 = thick / 2;
+  ctx.beginPath();
+  ctx.moveTo(2.2, 0); // leading edge (just ahead of the stock)
+  ctx.bezierCurveTo(2.2, -t2 * 0.85, -chord * 0.30, -t2, -chord * 0.45, -t2 * 0.8);
+  ctx.bezierCurveTo(-chord * 0.72, -t2 * 0.5, -chord * 0.92, -t2 * 0.2, -chord, -0.6);
+  ctx.lineTo(-chord, 0.6); // blunt trailing edge
+  ctx.bezierCurveTo(-chord * 0.92, t2 * 0.2, -chord * 0.72, t2 * 0.5, -chord * 0.45, t2 * 0.8);
+  ctx.bezierCurveTo(-chord * 0.30, t2, 2.2, t2 * 0.85, 2.2, 0);
+  ctx.closePath();
 }
 
 function drawSeat(ctx, x, y, size) {
