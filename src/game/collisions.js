@@ -31,6 +31,11 @@ import {
 const SOLVER_ITERATIONS = 2;
 // Impulse above which we splash some foam at the contact point.
 const SPLASH_IMPULSE = 900;
+// Numerical safety rails: deep overlaps (e.g. a boat placed inside a dock in
+// the editor) are resolved over several steps instead of one explosive shove,
+// and impulses are capped so no contact can fling a hull at escape velocity.
+const MAX_DEPTH_PER_STEP = 1.5;  // m
+const MAX_IMPULSE = 100000;       // N·s
 
 function ensureDyn(e) {
   if (e.vx === undefined) {
@@ -85,8 +90,22 @@ function collectBodies(world) {
     },
   ];
   for (const e of world.entities) {
+    // Skip anything with a corrupted pose or degenerate footprint — a bad
+    // body would poison every contact it participates in.
+    if (
+      !Number.isFinite(e.x) || !Number.isFinite(e.y) || !Number.isFinite(e.heading) ||
+      !Number.isFinite(e.length) || e.length <= 0 ||
+      !Number.isFinite(e.width) || e.width <= 0
+    ) continue;
     const isDock = e.category === 'dock';
-    if (!isDock) ensureDyn(e);
+    if (!isDock) {
+      ensureDyn(e);
+      if (!Number.isFinite(e.vx + e.vy + e.omega)) {
+        e.vx = 0;
+        e.vy = 0;
+        e.omega = 0;
+      }
+    }
     const m = ENTITY_DENSITY * e.length * e.width;
     const I = (m * (e.length * e.length + e.width * e.width)) / 12;
     bodies.push({
@@ -142,11 +161,14 @@ function resolvePair(world, a, b) {
   const nx = mtv.nx;
   const ny = mtv.ny;
   const totalInv = a.invM + b.invM;
-  if (totalInv === 0) return false;
+  if (totalInv === 0 || !Number.isFinite(totalInv)) return false;
 
   // Positional correction — push the dynamic side(s) out of penetration,
   // split by inverse mass (a dock takes none, so the boat does all of it).
-  const corr = (mtv.depth * COLLISION_CORRECTION) / totalInv;
+  // Depth is capped so deep editor-made overlaps unwind over a few steps
+  // instead of one teleporting shove.
+  const depth = Math.min(mtv.depth, MAX_DEPTH_PER_STEP);
+  const corr = (depth * COLLISION_CORRECTION) / totalInv;
   A.x -= nx * corr * a.invM;
   A.y -= ny * corr * a.invM;
   B.x += nx * corr * b.invM;
@@ -169,11 +191,13 @@ function resolvePair(world, a, b) {
   const vn = rvx * nx + rvy * ny;
   if (vn >= 0) return true; // already separating — de-penetration was enough
 
-  // Normal impulse.
+  // Normal impulse (clamped — a contact can stop a hull, not launch it).
   const rAn = rAx * ny - rAy * nx;
   const rBn = rBx * ny - rBy * nx;
   const denom = totalInv + rAn * rAn * a.invI + rBn * rBn * b.invI;
-  const jn = (-(1 + COLLISION_RESTITUTION) * vn) / denom;
+  let jn = (-(1 + COLLISION_RESTITUTION) * vn) / denom;
+  if (!Number.isFinite(jn)) return true;
+  if (jn > MAX_IMPULSE) jn = MAX_IMPULSE;
   applyImpulse(A, a, B, b, jn * nx, jn * ny, rAx, rAy, rBx, rBy);
 
   // Friction impulse along the contact tangent, clamped by Coulomb cone.
@@ -187,10 +211,12 @@ function resolvePair(world, a, b) {
     const rBt = rBx * ty - rBy * tx;
     const denomT = totalInv + rAt * rAt * a.invI + rBt * rBt * b.invI;
     let jt = -(rvx * tx + rvy * ty) / denomT;
-    const maxF = Math.abs(jn) * COLLISION_FRICTION;
-    if (jt > maxF) jt = maxF;
-    else if (jt < -maxF) jt = -maxF;
-    applyImpulse(A, a, B, b, jt * tx, jt * ty, rAx, rAy, rBx, rBy);
+    if (Number.isFinite(jt)) {
+      const maxF = Math.abs(jn) * COLLISION_FRICTION;
+      if (jt > maxF) jt = maxF;
+      else if (jt < -maxF) jt = -maxF;
+      applyImpulse(A, a, B, b, jt * tx, jt * ty, rAx, rAy, rBx, rBy);
+    }
   }
 
   // Foam splash on solid hits — visual/feel feedback for the contact.
@@ -211,6 +237,44 @@ function resolvePair(world, a, b) {
     }
   }
   return true;
+}
+
+// Last line of defense: if any dynamic state ever turns non-finite (a
+// degenerate contact, a corrupted save, a stale build), restore the last
+// healthy pose and kill the motion instead of freezing the whole game on a
+// NaN camera. Snapshots are taken every healthy step.
+export function guardDynamics(world) {
+  const b = world.boat;
+  if (!Number.isFinite(b.x + b.y + b.heading + b.vx + b.vy + b.omega)) {
+    b.x = Number.isFinite(b._gx) ? b._gx : 0;
+    b.y = Number.isFinite(b._gy) ? b._gy : 0;
+    b.heading = Number.isFinite(b._gh) ? b._gh : 0;
+    b.vx = 0;
+    b.vy = 0;
+    b.omega = 0;
+  } else {
+    b._gx = b.x;
+    b._gy = b.y;
+    b._gh = b.heading;
+  }
+
+  for (const e of world.entities) {
+    if (e.category === 'dock') continue;
+    if (e.vx !== undefined && !Number.isFinite(e.vx + e.vy + e.omega)) {
+      e.vx = 0;
+      e.vy = 0;
+      e.omega = 0;
+    }
+    if (!Number.isFinite(e.x + e.y + e.heading)) {
+      e.x = Number.isFinite(e._gx) ? e._gx : world.camera.x + 10;
+      e.y = Number.isFinite(e._gy) ? e._gy : world.camera.y;
+      e.heading = Number.isFinite(e._gh) ? e._gh : 0;
+    } else {
+      e._gx = e.x;
+      e._gy = e.y;
+      e._gh = e.heading;
+    }
+  }
 }
 
 function applyImpulse(A, a, B, b, jx, jy, rAx, rAy, rBx, rBy) {

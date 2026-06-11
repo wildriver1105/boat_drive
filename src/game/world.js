@@ -16,7 +16,7 @@ const STORAGE_KEY = 'boat_drive.map.v1';
 
 export function createWorld() {
   const persisted = loadPersisted();
-  const entities = Array.isArray(persisted.entities) ? persisted.entities : [];
+  const entities = sanitizeEntities(persisted.entities);
   reseedFromEntities(entities);
 
   return {
@@ -61,13 +61,43 @@ function loadPersisted() {
 export function saveWorld(world) {
   if (typeof localStorage === 'undefined') return;
   try {
-    // Strip transient dynamics (vx/vy/omega from collision shoves) — the
-    // map file stores only pose and identity.
-    const entities = world.entities.map(({ vx, vy, omega, ...rest }) => rest);
+    // Whitelist persisted fields — pose and identity only. Transient
+    // dynamics (vx/vy/omega, watchdog snapshots, …) never reach storage,
+    // and a corrupted pose is dropped rather than written.
+    const entities = sanitizeEntities(world.entities).map((e) => ({
+      id: e.id,
+      presetId: e.presetId,
+      category: e.category,
+      x: e.x,
+      y: e.y,
+      heading: e.heading,
+      length: e.length,
+      width: e.width,
+      hull: e.hull,
+      sail: e.sail,
+      cabin: e.cabin,
+    }));
     const data = { entities };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     world.edit.dirty = false;
   } catch (e) { /* ignore */ }
+}
+
+// Drop entities whose pose or footprint is not a finite number — protects
+// against maps that were saved while the simulation was corrupted (NaN
+// serializes to null in JSON) and against hand-edited storage.
+function sanitizeEntities(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (e) =>
+      e &&
+      typeof e === 'object' &&
+      Number.isFinite(e.x) &&
+      Number.isFinite(e.y) &&
+      Number.isFinite(e.heading) &&
+      Number.isFinite(e.length) && e.length > 0 &&
+      Number.isFinite(e.width) && e.width > 0
+  );
 }
 
 // Called from the loop after each fixed physics step. Maintains the wake

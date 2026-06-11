@@ -1,6 +1,6 @@
 import { stepBoat } from './physics.js';
 import { updateTrails, updateWindStreaks, saveWorld } from './world.js';
-import { stepEntities, resolveCollisions } from './collisions.js';
+import { stepEntities, resolveCollisions, guardDynamics } from './collisions.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from './constants.js';
 
 const EDIT_PAN_SPEED = 28; // m/s — how fast WASD pans the camera when editing
@@ -37,6 +37,8 @@ export function createLoop({ world, input, render }) {
         // entity, entity ↔ entity; docks are immovable).
         const moved = stepEntities(world, FIXED_DT);
         const touched = resolveCollisions(world);
+        // NaN watchdog — recover instead of freezing on a corrupted state.
+        guardDynamics(world);
         if (moved || touched) entitiesDirty = true;
         // Drive mode: camera glues to the boat each step.
         world.camera.x = world.boat.x;
