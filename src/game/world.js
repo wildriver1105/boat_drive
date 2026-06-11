@@ -44,6 +44,9 @@ export function createWorld() {
       selectedId: null,
       dragging: false,
       dragOffset: { x: 0, y: 0 },
+      // World position under the mouse while idle in edit mode — anchors
+      // the translucent placement preview. Null when not applicable.
+      hover: null,
       dirty: false,
     },
   };

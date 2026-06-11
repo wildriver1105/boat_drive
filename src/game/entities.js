@@ -33,6 +33,10 @@ export const ENTITY_PRESETS = [
   { id: 'catamaran',   label: 'Catamaran',   category: 'boat', length: 10, width: 5.5, hull: 'cat' },
 ];
 
+export function presetById(presetId) {
+  return ENTITY_PRESETS.find((p) => p.id === presetId) || null;
+}
+
 let _seq = 0;
 function nextId() {
   _seq += 1;
@@ -59,6 +63,30 @@ export function createEntity(presetId, x, y, heading = 0) {
 export function reseedFromEntities(entities) {
   if (!Array.isArray(entities)) return;
   _seq = Math.max(_seq, entities.length);
+}
+
+// ---------- Rotation handle (editor) ----------
+// A grab-able knob floating just beyond the bow of the selected entity.
+// Geometry lives here so the renderer (drawing) and the input layer
+// (hit-testing) stay in sync.
+
+export const ROT_HANDLE_OFFSET_M = 1.4; // distance beyond the bow tip
+export const ROT_HANDLE_RADIUS_M = 0.6; // visual radius
+export const ROT_HANDLE_HIT_M = 1.1;    // generous grab radius
+
+export function rotationHandlePos(e) {
+  const d = e.length / 2 + ROT_HANDLE_OFFSET_M;
+  return {
+    x: e.x + Math.cos(e.heading) * d,
+    y: e.y + Math.sin(e.heading) * d,
+  };
+}
+
+export function hitTestRotationHandle(wx, wy, e) {
+  const p = rotationHandlePos(e);
+  const dx = wx - p.x;
+  const dy = wy - p.y;
+  return dx * dx + dy * dy <= ROT_HANDLE_HIT_M * ROT_HANDLE_HIT_M;
 }
 
 // Is the world-frame point (wx, wy) inside this entity's oriented rectangle?

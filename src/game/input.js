@@ -15,7 +15,7 @@ import {
   hitTestHelm,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M } from './constants.js';
-import { createEntity, findEntityAt } from './entities.js';
+import { createEntity, findEntityAt, hitTestRotationHandle } from './entities.js';
 import { saveWorld } from './world.js';
 
 const ROTATE_STEP = Math.PI / 12; // 15° per key press / wheel notch
@@ -24,6 +24,7 @@ export function createInput({ canvas, world }) {
   const keys = new Set();
   let draggingThrottle = false;
   let draggingHelm = false;
+  let rotatingEntity = false;
   let prevHelmMouseAngle = 0;
   let hoverThrottle = false;
   let hoverHelm = false;
@@ -124,7 +125,7 @@ export function createInput({ canvas, world }) {
   function updateCursor() {
     let next;
     if (world.edit.mode) {
-      next = world.edit.dragging ? 'grabbing' : 'crosshair';
+      next = world.edit.dragging || rotatingEntity ? 'grabbing' : 'crosshair';
     } else if (draggingThrottle || draggingHelm) {
       next = 'grabbing';
     } else if (hoverThrottle || hoverHelm) {
@@ -157,17 +158,25 @@ export function createInput({ canvas, world }) {
   function handleEditMouseDown(x, y, width, height) {
     const wp = screenToWorld(x, y, width, height);
     const tool = world.edit.tool;
-    if (tool === 'select') {
-      const hit = findEntityAt(wp.x, wp.y, world.entities);
-      if (hit) {
-        world.edit.selectedId = hit.id;
-        world.edit.dragging = true;
-        world.edit.dragOffset = { x: wp.x - hit.x, y: wp.y - hit.y };
-      } else {
-        world.edit.selectedId = null;
-        world.edit.dragging = false;
-      }
-    } else {
+
+    // 1) Rotation handle of the current selection wins over everything —
+    //    grabbing it starts a rotate drag regardless of the active tool.
+    const selected = world.entities.find((en) => en.id === world.edit.selectedId);
+    if (selected && hitTestRotationHandle(wp.x, wp.y, selected)) {
+      rotatingEntity = true;
+      updateCursor();
+      return;
+    }
+
+    // 2) Clicking an existing entity selects it (and starts a move drag) —
+    //    in ANY tool, so you never stack a new boat on top of one you meant
+    //    to grab. Placement only happens on open water.
+    const hit = findEntityAt(wp.x, wp.y, world.entities);
+    if (hit) {
+      world.edit.selectedId = hit.id;
+      world.edit.dragging = true;
+      world.edit.dragOffset = { x: wp.x - hit.x, y: wp.y - hit.y };
+    } else if (tool !== 'select') {
       const entity = createEntity(tool, wp.x, wp.y);
       if (entity) {
         world.entities.push(entity);
@@ -176,15 +185,23 @@ export function createInput({ canvas, world }) {
         world.edit.dragOffset = { x: 0, y: 0 };
         world.edit.dirty = true;
       }
+    } else {
+      world.edit.selectedId = null;
+      world.edit.dragging = false;
     }
     updateCursor();
   }
 
   function handleEditMouseMove(x, y, width, height) {
-    if (!world.edit.dragging) return;
+    if (!world.edit.dragging && !rotatingEntity) return;
     const wp = screenToWorld(x, y, width, height);
     const e = world.entities.find((en) => en.id === world.edit.selectedId);
-    if (e) {
+    if (!e) return;
+    if (rotatingEntity) {
+      // The entity turns to face the mouse — bow follows the handle.
+      e.heading = Math.atan2(wp.y - e.y, wp.x - e.x);
+      world.edit.dirty = true;
+    } else {
       e.x = wp.x - world.edit.dragOffset.x;
       e.y = wp.y - world.edit.dragOffset.y;
       world.edit.dirty = true;
@@ -192,8 +209,9 @@ export function createInput({ canvas, world }) {
   }
 
   function handleEditMouseUp() {
-    if (world.edit.dragging) {
+    if (world.edit.dragging || rotatingEntity) {
       world.edit.dragging = false;
+      rotatingEntity = false;
       saveWorld(world);
       updateCursor();
     }
@@ -234,8 +252,15 @@ export function createInput({ canvas, world }) {
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
+      // Placement-ghost anchor: only while idle and actually over the
+      // canvas (not the toolbar or other HTML overlays).
+      if (!world.edit.dragging && !rotatingEntity && e.target === canvas) {
+        world.edit.hover = screenToWorld(p.x, p.y, p.width, p.height);
+      } else {
+        world.edit.hover = null;
+      }
       updateCursor();
-      if (world.edit.dragging) e.preventDefault();
+      if (world.edit.dragging || rotatingEntity) e.preventDefault();
       return;
     }
 
@@ -266,6 +291,7 @@ export function createInput({ canvas, world }) {
   const onMouseLeave = () => {
     hoverThrottle = false;
     hoverHelm = false;
+    world.edit.hover = null;
     updateCursor();
   };
 
@@ -312,7 +338,7 @@ export function createInput({ canvas, world }) {
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
-      if (world.edit.dragging) e.preventDefault();
+      if (world.edit.dragging || rotatingEntity) e.preventDefault();
       return;
     }
 

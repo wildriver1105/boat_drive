@@ -11,6 +11,12 @@ import {
 import { lateralPivotBodyX } from './physics.js';
 import { throttleLayout, helmLayout } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
+import {
+  ROT_HANDLE_OFFSET_M,
+  ROT_HANDLE_RADIUS_M,
+  presetById,
+  findEntityAt,
+} from './entities.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
@@ -32,6 +38,7 @@ export function createRenderer(canvas) {
     drawWake(ctx, w, h, world, fx);
     drawEntities(ctx, w, h, world);
     drawBoat(ctx, w, h, world);
+    if (world.edit.mode) drawPlacementGhost(ctx, w, h, world);
     // Atmosphere pass: vignette + sun glare over the world, under the HUD.
     ctx.drawImage(getVignette(fx, w, h), 0, 0, w, h);
     if (!world.edit.mode) {
@@ -1146,14 +1153,97 @@ function drawEntitySelectionFrame(ctx, e) {
   ctx.lineWidth = 1.6;
   ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
   ctx.setLineDash([]);
-  // Bow marker — small triangle on the +x side so you can see the heading.
-  ctx.fillStyle = 'rgba(255, 220, 90, 0.95)';
+
+  // Rotation handle — stick + knob beyond the bow. Drag it to rotate the
+  // entity; geometry matches hitTestRotationHandle in entities.js.
+  const handleDist = (e.length / 2 + ROT_HANDLE_OFFSET_M) * PX_PER_M;
+  const knobR = ROT_HANDLE_RADIUS_M * PX_PER_M;
+  ctx.strokeStyle = 'rgba(255, 220, 90, 0.85)';
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(L / 2 + 10, 0);
-  ctx.lineTo(L / 2 + 2, -5);
-  ctx.lineTo(L / 2 + 2, 5);
-  ctx.closePath();
+  ctx.moveTo(L / 2 + 3, 0);
+  ctx.lineTo(handleDist - knobR, 0);
+  ctx.stroke();
+  // Knob.
+  const kg = ctx.createRadialGradient(handleDist - knobR * 0.3, -knobR * 0.3, 1, handleDist, 0, knobR);
+  kg.addColorStop(0, '#ffe9a8');
+  kg.addColorStop(1, '#d6a83a');
+  ctx.beginPath();
+  ctx.arc(handleDist, 0, knobR, 0, Math.PI * 2);
+  ctx.fillStyle = kg;
   ctx.fill();
+  ctx.strokeStyle = 'rgba(90, 60, 10, 0.95)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Circular-arrows glyph on the knob.
+  ctx.strokeStyle = 'rgba(70, 45, 5, 0.95)';
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(handleDist, 0, knobR * 0.5, -Math.PI * 0.75, Math.PI * 0.65);
+  ctx.stroke();
+  ctx.beginPath();
+  const tipA = -Math.PI * 0.75;
+  const tx = handleDist + Math.cos(tipA) * knobR * 0.5;
+  const ty = Math.sin(tipA) * knobR * 0.5;
+  ctx.moveTo(tx - 2.4, ty - 0.6);
+  ctx.lineTo(tx, ty);
+  ctx.lineTo(tx + 0.8, ty - 2.6);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- Placement ghost ----------
+
+// Translucent preview of the entity about to be placed, anchored to the
+// mouse. Reuses the real entity art (minus the drop shadow) at low alpha,
+// plus a dashed cyan footprint so it clearly reads as "not placed yet".
+function drawPlacementGhost(ctx, w, h, world) {
+  const hover = world.edit.hover;
+  const tool = world.edit.tool;
+  if (!hover || tool === 'select' || world.edit.dragging) return;
+  const p = presetById(tool);
+  if (!p) return;
+  // Over an existing entity a click selects instead of placing — no ghost.
+  if (findEntityAt(hover.x, hover.y, world.entities)) return;
+
+  const ghost = {
+    id: p.id,
+    presetId: p.id,
+    category: p.category,
+    x: hover.x,
+    y: hover.y,
+    heading: 0,
+    length: p.length,
+    width: p.width,
+    hull: p.hull,
+    sail: p.sail,
+    cabin: p.cabin,
+  };
+  const L = p.length * PX_PER_M;
+  const W = p.width * PX_PER_M;
+  const sx = w / 2 + (hover.x - world.camera.x) * PX_PER_M;
+  const sy = h / 2 + (hover.y - world.camera.y) * PX_PER_M;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.globalAlpha = 0.45;
+  if (p.category === 'dock') {
+    drawDockEntity(ctx, ghost);
+  } else if (p.hull === 'cat') {
+    drawCatamaranTop(ctx, L, W, pickAccent(ghost));
+  } else if (p.sail) {
+    drawSailboatTop(ctx, L, W, p.sail === true ? 'sloop' : p.sail, pickAccent(ghost));
+  } else {
+    drawMotorboatTop(ctx, L, W, ghost, pickAccent(ghost));
+  }
+  // Dashed footprint marker.
+  ctx.globalAlpha = 0.85;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = 'rgba(130, 220, 255, 0.95)';
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
+  ctx.setLineDash([]);
   ctx.restore();
 }
 
@@ -1181,9 +1271,10 @@ function drawEditOverlay(ctx, w, h, world) {
   const lines = [
     'EDIT MODE — boat physics paused',
     'W A S D / ←↑→↓   Pan camera',
-    'Click             Place / select',
+    'Click             Select (always) / place on open water',
     'Drag              Move selected',
-    'Wheel / [  ]      Rotate selected (±15°)',
+    'Drag ◯ knob       Rotate selected (free)',
+    'Wheel / [  ]      Rotate selected (±15° steps)',
     'Delete            Remove selected',
     'Esc               Deselect',
   ];
