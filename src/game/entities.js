@@ -31,6 +31,11 @@ export const ENTITY_PRESETS = [
   { id: 'sail-ketch',  label: 'Ketch',       category: 'boat', length: 14, width: 3.8, hull: 'mono', sail: 'ketch', cabin: true },
   // Multihull
   { id: 'catamaran',   label: 'Catamaran',   category: 'boat', length: 10, width: 5.5, hull: 'cat' },
+  // Buoys — anchored to the seabed: immovable colliders, never pushed.
+  { id: 'buoy-red',     label: 'Red buoy',     category: 'buoy', length: 1.0, width: 1.0 },
+  { id: 'buoy-green',   label: 'Green buoy',   category: 'buoy', length: 1.0, width: 1.0 },
+  { id: 'buoy-yellow',  label: 'Race mark',    category: 'buoy', length: 1.2, width: 1.2 },
+  { id: 'buoy-mooring', label: 'Mooring ball', category: 'buoy', length: 0.8, width: 0.8 },
 ];
 
 export function presetById(presetId) {

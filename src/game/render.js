@@ -262,6 +262,7 @@ function drawEntities(ctx, w, h, world) {
     ctx.rotate(e.heading);
 
     if (e.category === 'dock') drawDockEntity(ctx, e);
+    else if (e.category === 'buoy') drawBuoyEntity(ctx, e, world.time);
     else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
 
     // Selection highlight + rotation-front indicator.
@@ -350,6 +351,68 @@ function drawDockCleat(ctx, x, y) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+}
+
+// ---------- Buoys (anchored navigation marks) ----------
+
+const BUOY_COLORS = {
+  'buoy-red':     { hi: '#ff8a7a', main: '#d63030', dark: '#7e1612', top: '#f4f6f8' },
+  'buoy-green':   { hi: '#7fe2a8', main: '#1f9e54', dark: '#0c5e2e', top: '#f4f6f8' },
+  'buoy-yellow':  { hi: '#ffe9a0', main: '#e8c33a', dark: '#8f7212', top: '#1c2630' },
+  'buoy-mooring': { hi: '#ffffff', main: '#e8ecf0', dark: '#9aa6b2', top: '#2a6fd6' },
+};
+
+function drawBuoyEntity(ctx, e, time) {
+  const r = (e.length * PX_PER_M) / 2;
+  const color = BUOY_COLORS[e.presetId] || BUOY_COLORS['buoy-yellow'];
+
+  // Bobbing ripple — an expanding, fading ring with a per-buoy phase, so a
+  // field of buoys doesn't pulse in lockstep.
+  const phase = entityHash01(e, 13);
+  const period = 2.6;
+  const u = (((time / period + phase) % 1) + 1) % 1;
+  const ringR = r * (1.2 + u * 1.3);
+  const ringA = 0.28 * (1 - u);
+  if (ringA > 0.01) {
+    ctx.beginPath();
+    ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(234, 246, 251, ${ringA.toFixed(3)})`;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  // Shadow on the water.
+  ctx.beginPath();
+  ctx.arc(1.5, 2.5, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.fill();
+
+  // Body — radial gradient for a rounded float.
+  const g = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.15, 0, 0, r);
+  g.addColorStop(0, color.hi);
+  g.addColorStop(0.55, color.main);
+  g.addColorStop(1, color.dark);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(10, 14, 20, 0.75)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // Top band / topmark.
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+  ctx.fillStyle = color.top;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+  // Lifting eye at the center.
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = '#222a33';
+  ctx.fill();
 }
 
 function drawStaticBoatEntity(ctx, e) {
@@ -1231,6 +1294,8 @@ function drawPlacementGhost(ctx, w, h, world) {
   ctx.globalAlpha = 0.45;
   if (p.category === 'dock') {
     drawDockEntity(ctx, ghost);
+  } else if (p.category === 'buoy') {
+    drawBuoyEntity(ctx, ghost, 0);
   } else if (p.hull === 'cat') {
     drawCatamaranTop(ctx, L, W, pickAccent(ghost));
   } else if (p.sail) {

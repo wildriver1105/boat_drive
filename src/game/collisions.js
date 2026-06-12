@@ -53,7 +53,7 @@ export function stepEntities(world, dt) {
   const linDamp = Math.exp(-ENTITY_LIN_DAMP * dt);
   const angDamp = Math.exp(-ENTITY_ANG_DAMP * dt);
   for (const e of world.entities) {
-    if (e.category === 'dock') continue;
+    if (e.category !== 'boat') continue; // docks & buoys never move
     if (e.vx === undefined) continue;
     if (e.vx === 0 && e.vy === 0 && e.omega === 0) continue;
 
@@ -85,7 +85,7 @@ function collectBodies(world) {
       W: BOAT_WIDTH,
       invM: 1 / MASS,
       invI: 1 / I_Z,
-      isDock: false,
+      isStatic: false,
       isEntity: false,
     },
   ];
@@ -97,8 +97,9 @@ function collectBodies(world) {
       !Number.isFinite(e.length) || e.length <= 0 ||
       !Number.isFinite(e.width) || e.width <= 0
     ) continue;
-    const isDock = e.category === 'dock';
-    if (!isDock) {
+    // Docks AND buoys are static — anchored, infinite mass, never pushed.
+    const isStatic = e.category !== 'boat';
+    if (!isStatic) {
       ensureDyn(e);
       if (!Number.isFinite(e.vx + e.vy + e.omega)) {
         e.vx = 0;
@@ -112,10 +113,10 @@ function collectBodies(world) {
       obj: e,
       L: e.length,
       W: e.width,
-      invM: isDock ? 0 : 1 / m,
-      invI: isDock ? 0 : 1 / I,
-      isDock,
-      isEntity: !isDock,
+      invM: isStatic ? 0 : 1 / m,
+      invI: isStatic ? 0 : 1 / I,
+      isStatic,
+      isEntity: !isStatic,
     });
   }
   return bodies;
@@ -132,7 +133,7 @@ export function resolveCollisions(world) {
       for (let j = i + 1; j < bodies.length; j++) {
         const a = bodies[i];
         const b = bodies[j];
-        if (a.isDock && b.isDock) continue; // static pair — nothing to do
+        if (a.isStatic && b.isStatic) continue; // static pair — nothing to do
 
         // Broadphase: bounding circles.
         const ra = 0.5 * Math.hypot(a.L, a.W);
@@ -259,7 +260,7 @@ export function guardDynamics(world) {
   }
 
   for (const e of world.entities) {
-    if (e.category === 'dock') continue;
+    if (e.category !== 'boat') continue; // statics have no dynamics to guard
     if (e.vx !== undefined && !Number.isFinite(e.vx + e.vy + e.omega)) {
       e.vx = 0;
       e.vy = 0;

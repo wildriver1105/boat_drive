@@ -182,6 +182,7 @@ export default function BoatGame() {
 function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
   const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock');
   const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
+  const buoys = ENTITY_PRESETS.filter((p) => p.category === 'buoy');
   return (
     <div className="editor-bar" role="toolbar" aria-label="Map editor">
       <div className="editor-bar-row">
@@ -216,6 +217,19 @@ function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
             className={`tool-btn ${tool === b.id ? 'active' : ''}`}
             onClick={() => onTool(b.id)}
             title={`${b.label} (${b.length}m × ${b.width}m)`}
+          >
+            {b.label}
+          </button>
+        ))}
+        <span className="tool-divider" />
+        <span className="tool-group-label">Buoys</span>
+        {buoys.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            className={`tool-btn ${tool === b.id ? 'active' : ''}`}
+            onClick={() => onTool(b.id)}
+            title={`${b.label} (anchored — never moves)`}
           >
             {b.label}
           </button>
