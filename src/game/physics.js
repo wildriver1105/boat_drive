@@ -18,6 +18,12 @@ import {
   WIND_ARM,
   THROTTLE_NEUTRAL_BAND,
   THROTTLE_CATCH_PULSE_TIME,
+  BOW_THRUSTER_FORCE,
+  STERN_THRUSTER_FORCE,
+  THRUSTER_BOW_ARM,
+  THRUSTER_STERN_ARM,
+  THRUSTER_RATE,
+  THRUSTER_SPEED_FALLOFF,
 } from './constants.js';
 
 export function createBoat(x = 0, y = 0, heading = 0) {
@@ -39,6 +45,10 @@ export function createBoat(x = 0, y = 0, heading = 0) {
     // Rudder helm: target is auto-return (set by key state), actual smooths toward it.
     rudderTarget: 0,
     rudder: 0,
+    // Tunnel thrusters: MOMENTARY (-1 = full port, +1 = full starboard).
+    // Actual value spools quickly toward whatever is held right now.
+    bowThruster: 0,
+    sternThruster: 0,
   };
 }
 
@@ -132,6 +142,13 @@ export function stepBoat(boat, keys, wind, dt) {
   boat.throttle = lerpTowards(boat.throttle, boat.throttleTarget, THROTTLE_RATE, dt);
   boat.rudder = lerpTowards(boat.rudder, boat.rudderTarget, RUDDER_RATE, dt);
 
+  // Thrusters are momentary: target IS the current key/button state, and
+  // the unit spools toward it quickly (release → snaps back to neutral).
+  const bowTarget = clamp(keys.bowThruster || 0, -1, 1);
+  const sternTarget = clamp(keys.sternThruster || 0, -1, 1);
+  boat.bowThruster = lerpTowards(boat.bowThruster, bowTarget, THRUSTER_RATE, dt);
+  boat.sternThruster = lerpTowards(boat.sternThruster, sternTarget, THRUSTER_RATE, dt);
+
   // Decay the visual catch pulse.
   if (boat.catchPulse > 0) {
     boat.catchPulse = Math.max(0, boat.catchPulse - dt);
@@ -180,6 +197,13 @@ export function stepBoat(boat, keys, wind, dt) {
   // flips the side the stern is kicked toward — exactly like a real boat.
   const F_rudder = -RUDDER_LIFT * boat.rudder * vFwd * Math.abs(vFwd);
 
+  // Tunnel thrusters: pure lateral jets at the bow / stern. Authority
+  // washes out quadratically with forward speed — past a few knots the
+  // tunnel flow collapses and they do next to nothing (docking aids only).
+  const thrusterEff = 1 / (1 + THRUSTER_SPEED_FALLOFF * vFwd * vFwd);
+  const F_bowT = boat.bowThruster * BOW_THRUSTER_FORCE * thrusterEff;
+  const F_sternT = boat.sternThruster * STERN_THRUSTER_FORCE * thrusterEff;
+
   // Wind force at the windage point (body x = +WIND_ARM, slightly forward of
   // CG). World wind velocity (fromBearing is meteorological — direction the
   // wind COMES FROM, so we negate to get the velocity vector). Canvas axes:
@@ -207,14 +231,17 @@ export function stepBoat(boat, keys, wind, dt) {
 
   // Sum of body-frame forces.
   const F_body_x = F_thrust + F_drag_fwd + F_wind_body_x;
-  const F_body_y = F_lat_bow + F_lat_stern + F_rudder + F_wind_body_y;
+  const F_body_y =
+    F_lat_bow + F_lat_stern + F_rudder + F_wind_body_y + F_bowT + F_sternT;
 
   // Torque about CG: τ = Σ x_b · F_y for each lateral force at (x_b, 0).
   const tau =
     HULL_DRAG_ARM * F_lat_bow +
     -HULL_DRAG_ARM * F_lat_stern +
     -RUDDER_ARM * F_rudder +
-    WIND_ARM * F_wind_body_y;
+    WIND_ARM * F_wind_body_y +
+    THRUSTER_BOW_ARM * F_bowT +
+    -THRUSTER_STERN_ARM * F_sternT;
 
   // Body → world acceleration.
   const ax = (F_body_x * cosH - F_body_y * sinH) / MASS;

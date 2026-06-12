@@ -201,6 +201,31 @@ function emitWakeParticles(world, b, speed, cosH, sinH) {
     }
   }
 
+  // Thruster wash — water jets out the side OPPOSITE the push, at the bow
+  // or stern tunnel. Visible even at rest, which is exactly when thrusters
+  // are used.
+  for (const [val, armX] of [
+    [b.bowThruster || 0, 2.4],
+    [b.sternThruster || 0, -2.4],
+  ]) {
+    if (Math.abs(val) > 0.25) {
+      const px = b.x + cosH * armX;
+      const py = b.y + sinH * armX;
+      const jet = -Math.sign(val); // hull pushed one way → jet exits the other
+      world.wake.push({
+        x: px + latX * jet * 1.2,
+        y: py + latY * jet * 1.2,
+        vx: latX * jet * (1.2 + Math.random() * 0.8),
+        vy: latY * jet * (1.2 + Math.random() * 0.8),
+        born: t,
+        lifetime: 0.5 + Math.random() * 0.4,
+        size0: 0.35,
+        grow: 1.4,
+        alpha: 0.4 * Math.abs(val),
+      });
+    }
+  }
+
   // Prop wash — fires whenever the gearbox is engaged, including at rest.
   if (Math.abs(b.throttle) > THROTTLE_NEUTRAL_BAND) {
     const px = b.x - cosH * 3.1;

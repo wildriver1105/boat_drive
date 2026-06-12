@@ -103,10 +103,10 @@ export default function BoatGame() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSettings]);
 
-  // Global "E" toggles edit mode (but ignore when typing in a form field).
+  // Global "M" (map) toggles edit mode — "E" is taken by the bow thruster.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== 'e' && e.key !== 'E') return;
+      if (e.key !== 'm' && e.key !== 'M') return;
       const tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -127,7 +127,7 @@ export default function BoatGame() {
             className="hud-btn edit-btn"
             onClick={() => setEditMode(true)}
             aria-label="Enter edit mode"
-            title="Edit map (E)"
+            title="Edit map (M)"
           >
             ✎
           </button>
@@ -224,7 +224,7 @@ function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
         <button type="button" className="tool-btn danger" onClick={onClearAll} title="Remove all">
           Clear all
         </button>
-        <button type="button" className="tool-btn primary" onClick={onExit} title="Exit edit mode (E)">
+        <button type="button" className="tool-btn primary" onClick={onExit} title="Exit edit mode (M)">
           Done
         </button>
       </div>

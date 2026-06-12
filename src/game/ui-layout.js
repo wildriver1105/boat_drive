@@ -53,6 +53,43 @@ export function yToThrottleValue(y, layout) {
   return v < -1 ? -1 : v > 1 ? 1 : v;
 }
 
+// ---------- Thruster rockers (bow / stern) ----------
+
+const THRUSTER_PANEL_W = 104;
+const THRUSTER_PANEL_H = 158;
+const THRUSTER_GAP = 12; // gap between thruster panel and throttle panel
+
+// Two horizontal momentary rockers stacked vertically, sitting just to the
+// LEFT of the throttle handle (bottom-right corner of the canvas). Each
+// rocker is split into a port (left) and starboard (right) half.
+export function thrusterLayout(canvasCssW, canvasCssH) {
+  const t = throttleLayout(canvasCssW, canvasCssH);
+  const px = t.px - THRUSTER_PANEL_W - THRUSTER_GAP;
+  const py = t.py + t.panelH - THRUSTER_PANEL_H; // bottom-aligned with throttle
+  const rockerW = THRUSTER_PANEL_W - 16;
+  const rockerH = 38;
+  return {
+    px,
+    py,
+    panelW: THRUSTER_PANEL_W,
+    panelH: THRUSTER_PANEL_H,
+    bow:   { x: px + 8, y: py + 38,  w: rockerW, h: rockerH },
+    stern: { x: px + 8, y: py + 104, w: rockerW, h: rockerH },
+  };
+}
+
+// Which rocker half (if any) is under the point? Returns
+// { unit: 'bow'|'stern', dir: -1 (port) | +1 (starboard) } or null.
+export function hitTestThruster(x, y, layout) {
+  for (const unit of ['bow', 'stern']) {
+    const r = layout[unit];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+      return { unit, dir: x < r.x + r.w / 2 ? -1 : 1 };
+    }
+  }
+  return null;
+}
+
 // ---------- Helm (steering wheel) ----------
 
 const HELM_RADIUS = 78;

@@ -13,6 +13,8 @@ import {
   yToThrottleValue,
   helmLayout,
   hitTestHelm,
+  thrusterLayout,
+  hitTestThruster,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M } from './constants.js';
 import { createEntity, findEntityAt, hitTestRotationHandle } from './entities.js';
@@ -25,6 +27,9 @@ export function createInput({ canvas, world }) {
   let draggingThrottle = false;
   let draggingHelm = false;
   let rotatingEntity = false;
+  // Mouse-held thruster rocker: { unit: 'bow'|'stern', dir: -1|+1 } | null.
+  // Momentary — active only while the button is physically held.
+  let heldThruster = null;
   let prevHelmMouseAngle = 0;
   let hoverThrottle = false;
   let hoverHelm = false;
@@ -112,6 +117,7 @@ export function createInput({ canvas, world }) {
       height: rect.height,
       layoutT: throttleLayout(rect.width, rect.height),
       layoutH: helmLayout(rect.width, rect.height),
+      layoutTh: thrusterLayout(rect.width, rect.height),
     };
   }
 
@@ -245,6 +251,13 @@ export function createInput({ canvas, world }) {
       prevHelmMouseAngle = Math.atan2(p.y - p.layoutH.cy, p.x - p.layoutH.cx);
       updateCursor();
       e.preventDefault();
+    } else {
+      const th = hitTestThruster(p.x, p.y, p.layoutTh);
+      if (th) {
+        heldThruster = th;
+        updateCursor();
+        e.preventDefault();
+      }
     }
   };
   const onMouseMove = (e) => {
@@ -281,9 +294,10 @@ export function createInput({ canvas, world }) {
       e.preventDefault();
       return;
     }
-    if (draggingThrottle || draggingHelm) {
+    if (draggingThrottle || draggingHelm || heldThruster) {
       draggingThrottle = false;
       draggingHelm = false;
+      heldThruster = null; // momentary — release = neutral
       updateCursor();
       e.preventDefault();
     }
@@ -329,6 +343,12 @@ export function createInput({ canvas, world }) {
       draggingHelm = true;
       prevHelmMouseAngle = Math.atan2(p.y - p.layoutH.cy, p.x - p.layoutH.cx);
       e.preventDefault();
+    } else {
+      const th = hitTestThruster(p.x, p.y, p.layoutTh);
+      if (th) {
+        heldThruster = th;
+        e.preventDefault();
+      }
     }
   };
   const onTouchMove = (e) => {
@@ -357,6 +377,7 @@ export function createInput({ canvas, world }) {
     }
     draggingThrottle = false;
     draggingHelm = false;
+    heldThruster = null;
   };
   canvas.addEventListener('touchstart', onTouchStart, { passive: false });
   window.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -365,12 +386,21 @@ export function createInput({ canvas, world }) {
 
   return {
     getKeys() {
+      // Momentary thruster command: keyboard and on-screen rocker combine.
+      let bow = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
+      let stern = (keys.has('KeyC') ? 1 : 0) - (keys.has('KeyZ') ? 1 : 0);
+      if (heldThruster) {
+        if (heldThruster.unit === 'bow') bow += heldThruster.dir;
+        else stern += heldThruster.dir;
+      }
       return {
         throttleUp: keys.has('KeyW') || keys.has('ArrowUp'),
         throttleDown: keys.has('KeyS') || keys.has('ArrowDown'),
         rudderLeft: keys.has('KeyA') || keys.has('ArrowLeft'),
         rudderRight: keys.has('KeyD') || keys.has('ArrowRight'),
         neutral: keys.has('Space'),
+        bowThruster: bow,
+        sternThruster: stern,
         mouseDraggingThrottle: draggingThrottle,
         mouseDraggingHelm: draggingHelm,
       };
@@ -399,6 +429,10 @@ function isGameKey(code) {
     code === 'KeyA' ||
     code === 'KeyS' ||
     code === 'KeyD' ||
+    code === 'KeyQ' ||
+    code === 'KeyE' ||
+    code === 'KeyZ' ||
+    code === 'KeyC' ||
     code === 'ArrowUp' ||
     code === 'ArrowDown' ||
     code === 'ArrowLeft' ||

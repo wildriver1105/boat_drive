@@ -50,6 +50,20 @@ export const HULL_DRAG_ARM = 2.0;
 export const DRAG_LAT_LIN_PER_POINT = 300;
 export const DRAG_LAT_QUAD_PER_POINT = 200;
 
+// === Thrusters ===
+// Tunnel thrusters at the bow and stern: lateral jets used for docking.
+// MOMENTARY controls — they thrust only while held and snap back to
+// neutral on release, like the spring-return rocker on a real panel.
+// Force applied at (±THRUSTER_*_ARM, 0) so each unit both translates the
+// hull and yaws it about the CG. Authority falls off quickly with forward
+// speed (tunnel flow washes out) — they're docking tools, not steering.
+export const BOW_THRUSTER_FORCE = 900;    // N
+export const STERN_THRUSTER_FORCE = 900;  // N
+export const THRUSTER_BOW_ARM = 2.4;      // m forward of CG
+export const THRUSTER_STERN_ARM = 2.4;    // m aft of CG
+export const THRUSTER_RATE = 6;           // 1/s — spool up/down speed
+export const THRUSTER_SPEED_FALLOFF = 0.12; // authority ∝ 1/(1 + k·vFwd²)
+
 // === Rudder ===
 // The rudder is a lifting surface AT THE STERN. The force it produces is
 // perpendicular to the hull (lateral, in body frame) and is applied at

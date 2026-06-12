@@ -9,7 +9,7 @@ import {
   THROTTLE_CATCH_PULSE_TIME,
 } from './constants.js';
 import { lateralPivotBodyX } from './physics.js';
-import { throttleLayout, helmLayout } from './ui-layout.js';
+import { throttleLayout, helmLayout, thrusterLayout } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
 import {
   ROT_HANDLE_OFFSET_M,
@@ -44,6 +44,7 @@ export function createRenderer(canvas) {
     if (!world.edit.mode) {
       drawHelm(ctx, w, h, world.boat);
       drawThrottleHandle(ctx, w, h, world.boat);
+      drawThrusterPanel(ctx, w, h, world.boat);
       drawHints(ctx, w, h);
     } else {
       drawEditOverlay(ctx, w, h, world);
@@ -2131,6 +2132,92 @@ function throttleOrder(value) {
   return dir + ' SLOW';
 }
 
+// ---------- Thruster rockers (bow / stern) ----------
+
+function drawThrusterPanel(ctx, w, h, boat) {
+  const layout = thrusterLayout(w, h);
+  const { px, py, panelW, panelH } = layout;
+
+  ctx.save();
+
+  // Housing (matches the throttle panel styling).
+  roundedRect(ctx, px, py, panelW, panelH, 12);
+  const housingGrad = ctx.createLinearGradient(px, py, px, py + panelH);
+  housingGrad.addColorStop(0, 'rgba(20, 40, 56, 0.78)');
+  housingGrad.addColorStop(1, 'rgba(6, 18, 28, 0.78)');
+  ctx.fillStyle = housingGrad;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200, 235, 250, 0.22)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(220, 240, 250, 0.75)';
+  ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('THRUSTERS', px + panelW / 2, py + 18);
+
+  drawThrusterRocker(ctx, layout.bow, 'BOW', 'Q', 'E', boat.bowThruster);
+  drawThrusterRocker(ctx, layout.stern, 'STERN', 'Z', 'C', boat.sternThruster);
+
+  ctx.restore();
+}
+
+// One momentary rocker: ◀ port half / starboard half ▶. The active side
+// glows with intensity proportional to the spooled thruster value.
+function drawThrusterRocker(ctx, r, label, keyPort, keyStbd, value) {
+  // Label above the rocker.
+  ctx.fillStyle = 'rgba(180, 210, 230, 0.7)';
+  ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, r.x + r.w / 2, r.y - 5);
+
+  // Body.
+  roundedRect(ctx, r.x, r.y, r.w, r.h, 7);
+  ctx.fillStyle = 'rgba(8, 18, 26, 0.95)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200, 235, 250, 0.25)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Active-side glow (port = value < 0, starboard = value > 0).
+  const mag = Math.min(1, Math.abs(value));
+  if (mag > 0.03) {
+    ctx.save();
+    roundedRect(ctx, r.x, r.y, r.w, r.h, 7);
+    ctx.clip();
+    const half = r.w / 2;
+    const gx = value < 0 ? r.x : r.x + half;
+    const grad = ctx.createLinearGradient(
+      value < 0 ? r.x + half : r.x + half, 0,
+      value < 0 ? r.x : r.x + r.w, 0
+    );
+    grad.addColorStop(0, 'rgba(80, 200, 255, 0)');
+    grad.addColorStop(1, `rgba(80, 200, 255, ${(0.55 * mag).toFixed(3)})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(gx, r.y, half, r.h);
+    ctx.restore();
+  }
+
+  // Center divider notch.
+  ctx.strokeStyle = 'rgba(200, 235, 250, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(r.x + r.w / 2, r.y + 4);
+  ctx.lineTo(r.x + r.w / 2, r.y + r.h - 4);
+  ctx.stroke();
+
+  // Arrows + key captions on each half.
+  const cy = r.y + r.h / 2;
+  ctx.fillStyle = 'rgba(225, 240, 250, 0.9)';
+  ctx.font = 'bold 12px -apple-system, sans-serif';
+  ctx.fillText('◀', r.x + r.w * 0.25, cy + 1);
+  ctx.fillText('▶', r.x + r.w * 0.75, cy + 1);
+  ctx.fillStyle = 'rgba(170, 195, 215, 0.6)';
+  ctx.font = '8px monospace';
+  ctx.fillText(keyPort, r.x + r.w * 0.25, r.y + r.h - 4);
+  ctx.fillText(keyStbd, r.x + r.w * 0.75, r.y + r.h - 4);
+}
+
 // ---------- Info panel (speed, heading, rudder) ----------
 
 function drawInfoPanel(ctx, w, h, world) {
@@ -2249,9 +2336,12 @@ function drawHints(ctx, w, h) {
     'S / ↓    Throttle down  (sticky • catches at neutral)',
     'A / ←    Helm to port   (sticky)',
     'D / →    Helm to stbd   (sticky)',
+    'Q / E    Bow thruster   (hold — momentary)',
+    'Z / C    Stern thruster (hold — momentary)',
     'Space    Snap throttle & helm to neutral',
-    'Mouse    Drag throttle lever / helm wheel',
-    '         (release & re-press W/S to cross neutral)',
+    'Mouse    Drag throttle lever / helm wheel,',
+    '         hold thruster rockers',
+    'M        Map editor',
   ];
   const x = 16;
   const yTop = 24;
