@@ -64,6 +64,24 @@ export const THRUSTER_STERN_ARM = 2.4;    // m aft of CG
 export const THRUSTER_RATE = 6;           // 1/s — spool up/down speed
 export const THRUSTER_SPEED_FALLOFF = 0.12; // authority ∝ 1/(1 + k·vFwd²)
 
+// Duty cycle: tunnel thrusters can't run continuously — the motor heats up.
+// Each unit has its own 0..1 heat gauge that rises while thrusting and cools
+// while idle. At 1.0 it OVERHEATS and locks out; it stays locked until the
+// gauge cools back below THRUSTER_HEAT_RESET, forcing a real rest period.
+export const THRUSTER_HEAT_RATE = 0.34;   // 1/s heating → ~3s of full use to trip
+export const THRUSTER_COOL_RATE = 0.45;   // 1/s cooling while idle
+export const THRUSTER_HEAT_RESET = 0.2;   // must cool to here before unlocking
+
+// Thermal fatigue: every overheat lowers the trip point, so repeated abuse
+// trips the motor progressively sooner. The trip threshold starts at the
+// nominal TRIP_BASE (~2/3 of the gauge), drops by FATIGUE_STEP each overheat
+// (floored at TRIP_MIN), and slowly recovers back toward TRIP_BASE while the
+// unit is genuinely rested (cool).
+export const THRUSTER_TRIP_BASE = 0.67;   // nominal trip point & recovery ceiling
+export const THRUSTER_TRIP_MIN = 0.35;    // floor for the shrinking trip point
+export const THRUSTER_FATIGUE_STEP = 0.08; // trip point drop per overheat
+export const THRUSTER_TRIP_RECOVER = 0.05; // 1/s trip-point recovery while rested
+
 // === Rudder ===
 // The rudder is a lifting surface AT THE STERN. The force it produces is
 // perpendicular to the hull (lateral, in body frame) and is applied at

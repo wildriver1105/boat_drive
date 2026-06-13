@@ -24,6 +24,13 @@ import {
   THRUSTER_STERN_ARM,
   THRUSTER_RATE,
   THRUSTER_SPEED_FALLOFF,
+  THRUSTER_HEAT_RATE,
+  THRUSTER_COOL_RATE,
+  THRUSTER_HEAT_RESET,
+  THRUSTER_TRIP_BASE,
+  THRUSTER_TRIP_MIN,
+  THRUSTER_FATIGUE_STEP,
+  THRUSTER_TRIP_RECOVER,
 } from './constants.js';
 
 export function createBoat(x = 0, y = 0, heading = 0) {
@@ -49,7 +56,44 @@ export function createBoat(x = 0, y = 0, heading = 0) {
     // Actual value spools quickly toward whatever is held right now.
     bowThruster: 0,
     sternThruster: 0,
+    // Per-unit overheat gauges (0..1), lockout flags, and (fatigue) trip
+    // thresholds. The trip threshold drops with each overheat and recovers
+    // while rested.
+    bowHeat: 0,
+    sternHeat: 0,
+    bowLocked: false,
+    sternLocked: false,
+    bowTrip: THRUSTER_TRIP_BASE,
+    sternTrip: THRUSTER_TRIP_BASE,
   };
+}
+
+// Advance one thruster's heat model and return the effective command after
+// the overheat lockout. While locked the command is forced to 0 (motor cut
+// out) and the gauge keeps cooling until it drops below the reset threshold.
+// Each overheat applies thermal fatigue, lowering this unit's trip point so
+// the next overheat arrives sooner; the trip point recovers while rested.
+function stepThrusterHeat(boat, rawCmd, dt, heatKey, lockKey, tripKey) {
+  let cmd = clamp(rawCmd, -1, 1);
+  if (boat[lockKey]) cmd = 0;
+  const load = Math.abs(cmd);
+  if (load > 0.01) {
+    boat[heatKey] = Math.min(1, boat[heatKey] + THRUSTER_HEAT_RATE * load * dt);
+  } else {
+    boat[heatKey] = Math.max(0, boat[heatKey] - THRUSTER_COOL_RATE * dt);
+    // Recover trip capacity only while genuinely rested (cool).
+    if (boat[heatKey] < THRUSTER_HEAT_RESET) {
+      boat[tripKey] = Math.min(THRUSTER_TRIP_BASE, boat[tripKey] + THRUSTER_TRIP_RECOVER * dt);
+    }
+  }
+  if (!boat[lockKey] && boat[heatKey] >= boat[tripKey]) {
+    boat[lockKey] = true;
+    // Fatigue: bring the next trip point earlier.
+    boat[tripKey] = Math.max(THRUSTER_TRIP_MIN, boat[tripKey] - THRUSTER_FATIGUE_STEP);
+  } else if (boat[lockKey] && boat[heatKey] <= THRUSTER_HEAT_RESET) {
+    boat[lockKey] = false;
+  }
+  return cmd;
 }
 
 function clamp(v, lo, hi) {
@@ -144,8 +188,9 @@ export function stepBoat(boat, keys, wind, dt) {
 
   // Thrusters are momentary: target IS the current key/button state, and
   // the unit spools toward it quickly (release → snaps back to neutral).
-  const bowTarget = clamp(keys.bowThruster || 0, -1, 1);
-  const sternTarget = clamp(keys.sternThruster || 0, -1, 1);
+  // Heat model gates the command — an overheated unit is locked out.
+  const bowTarget = stepThrusterHeat(boat, keys.bowThruster || 0, dt, 'bowHeat', 'bowLocked', 'bowTrip');
+  const sternTarget = stepThrusterHeat(boat, keys.sternThruster || 0, dt, 'sternHeat', 'sternLocked', 'sternTrip');
   boat.bowThruster = lerpTowards(boat.bowThruster, bowTarget, THRUSTER_RATE, dt);
   boat.sternThruster = lerpTowards(boat.sternThruster, sternTarget, THRUSTER_RATE, dt);
 

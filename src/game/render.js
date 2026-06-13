@@ -38,7 +38,7 @@ export function createRenderer(canvas) {
     if (!world.edit.mode) {
       drawHelm(ctx, w, h, world.boat);
       drawThrottleHandle(ctx, w, h, world.boat);
-      drawThrusterPanel(ctx, w, h, world.boat);
+      drawThrusterPanel(ctx, w, h, world.boat, world.time);
       drawHints(ctx, w, h);
     } else {
       drawEditOverlay(ctx, w, h, world);
@@ -2164,7 +2164,7 @@ function throttleOrder(value) {
 
 // ---------- Thruster rockers (bow / stern) ----------
 
-function drawThrusterPanel(ctx, w, h, boat) {
+function drawThrusterPanel(ctx, w, h, boat, time) {
   const layout = thrusterLayout(w, h);
   const { px, py, panelW, panelH } = layout;
 
@@ -2186,15 +2186,17 @@ function drawThrusterPanel(ctx, w, h, boat) {
   ctx.textAlign = 'center';
   ctx.fillText('THRUSTERS', px + panelW / 2, py + 18);
 
-  drawThrusterRocker(ctx, layout.bow, 'BOW', 'Q', 'E', boat.bowThruster);
-  drawThrusterRocker(ctx, layout.stern, 'STERN', 'Z', 'C', boat.sternThruster);
+  drawThrusterRocker(ctx, layout.bow, 'BOW', 'Q', 'E', boat.bowThruster, boat.bowHeat, boat.bowLocked, boat.bowTrip, time);
+  drawThrusterRocker(ctx, layout.stern, 'STERN', 'Z', 'C', boat.sternThruster, boat.sternHeat, boat.sternLocked, boat.sternTrip, time);
 
   ctx.restore();
 }
 
 // One momentary rocker: ◀ port half / starboard half ▶. The active side
-// glows with intensity proportional to the spooled thruster value.
-function drawThrusterRocker(ctx, r, label, keyPort, keyStbd, value) {
+// glows with intensity proportional to the spooled thruster value. Below it
+// sits a heat gauge; when the unit overheats the rocker dims, goes red, and
+// shows OVERHEAT until it has cooled.
+function drawThrusterRocker(ctx, r, label, keyPort, keyStbd, value, heat, locked, trip, time) {
   // Label above the rocker.
   ctx.fillStyle = 'rgba(180, 210, 230, 0.7)';
   ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
@@ -2205,47 +2207,94 @@ function drawThrusterRocker(ctx, r, label, keyPort, keyStbd, value) {
   roundedRect(ctx, r.x, r.y, r.w, r.h, 7);
   ctx.fillStyle = 'rgba(8, 18, 26, 0.95)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(200, 235, 250, 0.25)';
+  ctx.strokeStyle = locked ? 'rgba(255, 110, 90, 0.7)' : 'rgba(200, 235, 250, 0.25)';
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Active-side glow (port = value < 0, starboard = value > 0).
-  const mag = Math.min(1, Math.abs(value));
-  if (mag > 0.03) {
+  if (locked) {
+    // Locked-out: red wash + blinking OVERHEAT caption, no active glow.
     ctx.save();
     roundedRect(ctx, r.x, r.y, r.w, r.h, 7);
     ctx.clip();
-    const half = r.w / 2;
-    const gx = value < 0 ? r.x : r.x + half;
-    const grad = ctx.createLinearGradient(
-      value < 0 ? r.x + half : r.x + half, 0,
-      value < 0 ? r.x : r.x + r.w, 0
-    );
-    grad.addColorStop(0, 'rgba(80, 200, 255, 0)');
-    grad.addColorStop(1, `rgba(80, 200, 255, ${(0.55 * mag).toFixed(3)})`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(gx, r.y, half, r.h);
+    const blink = 0.18 + 0.12 * (0.5 + 0.5 * Math.sin(time * 6));
+    ctx.fillStyle = `rgba(220, 70, 50, ${blink.toFixed(3)})`;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.restore();
+    ctx.fillStyle = 'rgba(255, 180, 160, 0.95)';
+    ctx.font = 'bold 9px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('OVERHEAT', r.x + r.w / 2, r.y + r.h / 2 + 3);
+  } else {
+    // Active-side glow (port = value < 0, starboard = value > 0).
+    const mag = Math.min(1, Math.abs(value));
+    if (mag > 0.03) {
+      ctx.save();
+      roundedRect(ctx, r.x, r.y, r.w, r.h, 7);
+      ctx.clip();
+      const half = r.w / 2;
+      const gx = value < 0 ? r.x : r.x + half;
+      const grad = ctx.createLinearGradient(r.x + half, 0, value < 0 ? r.x : r.x + r.w, 0);
+      grad.addColorStop(0, 'rgba(80, 200, 255, 0)');
+      grad.addColorStop(1, `rgba(80, 200, 255, ${(0.55 * mag).toFixed(3)})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(gx, r.y, half, r.h);
+      ctx.restore();
+    }
+
+    // Center divider notch.
+    ctx.strokeStyle = 'rgba(200, 235, 250, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(r.x + r.w / 2, r.y + 4);
+    ctx.lineTo(r.x + r.w / 2, r.y + r.h - 4);
+    ctx.stroke();
+
+    // Arrows + key captions on each half.
+    const cy = r.y + r.h / 2;
+    ctx.fillStyle = 'rgba(225, 240, 250, 0.9)';
+    ctx.font = 'bold 12px -apple-system, sans-serif';
+    ctx.fillText('◀', r.x + r.w * 0.25, cy + 1);
+    ctx.fillText('▶', r.x + r.w * 0.75, cy + 1);
+    ctx.fillStyle = 'rgba(170, 195, 215, 0.6)';
+    ctx.font = '8px monospace';
+    ctx.fillText(keyPort, r.x + r.w * 0.25, r.y + r.h - 4);
+    ctx.fillText(keyStbd, r.x + r.w * 0.75, r.y + r.h - 4);
   }
 
-  // Center divider notch.
-  ctx.strokeStyle = 'rgba(200, 235, 250, 0.35)';
-  ctx.lineWidth = 1;
+  // Heat gauge directly below the rocker.
+  const gy = r.y + r.h + 3;
+  const gh = 4;
+  roundedRect(ctx, r.x, gy, r.w, gh, 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fill();
+  const hv = Math.max(0, Math.min(1, heat));
+  const tv = Math.max(0.05, Math.min(1, trip));
+  if (hv > 0.001) {
+    // Colour by how close heat is to the (shrinking) trip point.
+    const ratio = hv / tv;
+    let col;
+    if (ratio < 0.5) col = '90, 210, 120';
+    else if (ratio < 0.8) col = '230, 200, 70';
+    else col = '230, 80, 60';
+    ctx.save();
+    roundedRect(ctx, r.x, gy, r.w, gh, 2);
+    ctx.clip();
+    ctx.fillStyle = `rgba(${col}, 0.95)`;
+    ctx.fillRect(r.x, gy, r.w * hv, gh);
+    ctx.restore();
+  }
+  // Beyond the trip point: dim the gauge to show lost (fatigued) capacity.
+  if (tv < 0.999) {
+    ctx.fillStyle = 'rgba(120, 30, 24, 0.5)';
+    ctx.fillRect(r.x + r.w * tv, gy, r.w * (1 - tv), gh);
+  }
+  // Moving red-line tick at the current trip point.
+  ctx.strokeStyle = 'rgba(255, 120, 100, 0.95)';
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.moveTo(r.x + r.w / 2, r.y + 4);
-  ctx.lineTo(r.x + r.w / 2, r.y + r.h - 4);
+  ctx.moveTo(r.x + r.w * tv, gy - 1.5);
+  ctx.lineTo(r.x + r.w * tv, gy + gh + 1.5);
   ctx.stroke();
-
-  // Arrows + key captions on each half.
-  const cy = r.y + r.h / 2;
-  ctx.fillStyle = 'rgba(225, 240, 250, 0.9)';
-  ctx.font = 'bold 12px -apple-system, sans-serif';
-  ctx.fillText('◀', r.x + r.w * 0.25, cy + 1);
-  ctx.fillText('▶', r.x + r.w * 0.75, cy + 1);
-  ctx.fillStyle = 'rgba(170, 195, 215, 0.6)';
-  ctx.font = '8px monospace';
-  ctx.fillText(keyPort, r.x + r.w * 0.25, r.y + r.h - 4);
-  ctx.fillText(keyStbd, r.x + r.w * 0.75, r.y + r.h - 4);
 }
 
 // ---------- Info panel (speed, heading, rudder) ----------
