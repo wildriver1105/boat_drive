@@ -20,15 +20,11 @@ export const ENTITY_PRESETS = [
   { id: 'dock-long',   label: 'Plank 12m',      category: 'dock', length: 12, width: 1.8 },
   // Motorboats
   { id: 'mono-small',  label: 'Dinghy',      category: 'boat', length: 4,  width: 1.6, hull: 'mono' },
-  { id: 'mono-medium', label: 'Runabout',    category: 'boat', length: 7,  width: 2.4, hull: 'mono' },
   { id: 'mono-large',  label: 'Cruiser',     category: 'boat', length: 12, width: 3.6, hull: 'mono', cabin: true },
   { id: 'mono-yacht',  label: 'Yacht',       category: 'boat', length: 18, width: 4.5, hull: 'mono', cabin: true },
   // Sailboats — the `sail` field encodes the rig type so the renderer
-  // picks the right mast/sail layout. Keeping the legacy 'sailboat' id
-  // around so existing saved maps still resolve.
+  // picks the right mast/sail layout.
   { id: 'sail-dinghy', label: 'Sail dinghy', category: 'boat', length: 4,  width: 1.5, hull: 'mono', sail: 'dinghy' },
-  { id: 'sailboat',    label: 'Sloop',       category: 'boat', length: 9,  width: 2.8, hull: 'mono', sail: 'sloop' },
-  { id: 'sail-ketch',  label: 'Ketch',       category: 'boat', length: 14, width: 3.8, hull: 'mono', sail: 'ketch', cabin: true },
   // Multihull
   { id: 'catamaran',   label: 'Catamaran',   category: 'boat', length: 10, width: 5.5, hull: 'cat' },
   // Buoys — anchored to the seabed: immovable colliders, never pushed.

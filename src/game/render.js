@@ -8,7 +8,6 @@ import {
   THROTTLE_NEUTRAL_BAND,
   THROTTLE_CATCH_PULSE_TIME,
 } from './constants.js';
-import { lateralPivotBodyX } from './physics.js';
 import { throttleLayout, helmLayout, thrusterLayout } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
 import {
@@ -1533,21 +1532,6 @@ function drawBoat(ctx, w, h, world) {
   ctx.fillStyle = '#28b85a';
   ctx.fill();
   ctx.stroke();
-
-  // 16) Pivot-point marker — instantaneous lateral center of rotation.
-  const pivotX = lateralPivotBodyX(boat);
-  if (pivotX != null) {
-    const clamped = Math.max(-half, Math.min(half, pivotX * PX_PER_M));
-    ctx.save();
-    ctx.fillStyle = 'rgba(255, 215, 90, 0.95)';
-    ctx.strokeStyle = 'rgba(120, 70, 20, 0.9)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.arc(clamped, 0, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
 
   ctx.restore();
 }

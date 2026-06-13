@@ -261,19 +261,7 @@ export function stepBoat(boat, keys, wind, dt) {
   else if (boat.heading <= -Math.PI) boat.heading += 2 * Math.PI;
 }
 
-// Diagnostic helpers used by the renderer (HUD / pivot dot).
+// Diagnostic helper used by the renderer (HUD speed readout).
 export function boatSpeed(boat) {
   return Math.hypot(boat.vx, boat.vy);
-}
-
-// Instantaneous "lateral pivot point" of the hull in body-frame x.
-// This is the point along the centerline whose lateral velocity (vLat + ω·x)
-// is zero — i.e. the point about which the hull is instantaneously rotating
-// in the lateral sense. Returns null when the boat is barely yawing.
-export function lateralPivotBodyX(boat) {
-  if (Math.abs(boat.omega) < 0.04) return null;
-  const cosH = Math.cos(boat.heading);
-  const sinH = Math.sin(boat.heading);
-  const vLat = -boat.vx * sinH + boat.vy * cosH;
-  return -vLat / boat.omega;
 }
