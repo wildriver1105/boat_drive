@@ -66,30 +66,6 @@ export function reseedFromEntities(entities) {
   _seq = Math.max(_seq, entities.length);
 }
 
-// ---------- Rotation handle (editor) ----------
-// A grab-able knob floating just beyond the bow of the selected entity.
-// Geometry lives here so the renderer (drawing) and the input layer
-// (hit-testing) stay in sync.
-
-export const ROT_HANDLE_OFFSET_M = 1.4; // distance beyond the bow tip
-export const ROT_HANDLE_RADIUS_M = 0.6; // visual radius
-export const ROT_HANDLE_HIT_M = 1.1;    // generous grab radius
-
-export function rotationHandlePos(e) {
-  const d = e.length / 2 + ROT_HANDLE_OFFSET_M;
-  return {
-    x: e.x + Math.cos(e.heading) * d,
-    y: e.y + Math.sin(e.heading) * d,
-  };
-}
-
-export function hitTestRotationHandle(wx, wy, e) {
-  const p = rotationHandlePos(e);
-  const dx = wx - p.x;
-  const dy = wy - p.y;
-  return dx * dx + dy * dy <= ROT_HANDLE_HIT_M * ROT_HANDLE_HIT_M;
-}
-
 // Is the world-frame point (wx, wy) inside this entity's oriented rectangle?
 export function pointInEntity(wx, wy, e) {
   const cosH = Math.cos(e.heading);

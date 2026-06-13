@@ -10,13 +10,7 @@ import {
 } from './constants.js';
 import { throttleLayout, helmLayout, thrusterLayout } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
-import {
-  ROT_HANDLE_OFFSET_M,
-  ROT_HANDLE_RADIUS_M,
-  presetById,
-  findEntityAt,
-  snapDockPose,
-} from './entities.js';
+import { presetById, findEntityAt, snapDockPose } from './entities.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
@@ -265,11 +259,9 @@ function drawEntities(ctx, w, h, world) {
     else if (e.category === 'buoy') drawBuoyEntity(ctx, e, world.time);
     else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
 
-    // Selection highlight + rotation-front indicator. The rotation knob only
-    // shows with the Select tool — during placement it would be inert and
-    // could be mistaken for a target, so we hide it.
+    // Selection highlight + heading indicator.
     if (world.edit.mode && world.edit.selectedId === e.id) {
-      drawEntitySelectionFrame(ctx, e, world.edit.tool === 'select');
+      drawEntitySelectionFrame(ctx, e);
     }
 
     ctx.restore();
@@ -1210,7 +1202,7 @@ function drawCatamaranTop(ctx, L, W, accent) {
   drawEntitySeat(ctx, -half * 0.64, 0, Math.max(6, off * 0.36));
 }
 
-function drawEntitySelectionFrame(ctx, e, showHandle = true) {
+function drawEntitySelectionFrame(ctx, e) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
   ctx.save();
@@ -1220,47 +1212,15 @@ function drawEntitySelectionFrame(ctx, e, showHandle = true) {
   ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
   ctx.setLineDash([]);
 
-  if (!showHandle) {
-    ctx.restore();
-    return;
-  }
-
-  // Rotation handle — stick + knob beyond the bow. Drag it to rotate the
-  // entity; geometry matches hitTestRotationHandle in entities.js.
-  const handleDist = (e.length / 2 + ROT_HANDLE_OFFSET_M) * PX_PER_M;
-  const knobR = ROT_HANDLE_RADIUS_M * PX_PER_M;
-  ctx.strokeStyle = 'rgba(255, 220, 90, 0.85)';
-  ctx.lineWidth = 1.4;
+  // Bow/front direction marker so the current heading is readable. Rotation
+  // is keyboard-driven ([ / ], Shift for 45° snap), so no on-canvas handle.
+  ctx.fillStyle = 'rgba(255, 220, 90, 0.95)';
   ctx.beginPath();
-  ctx.moveTo(L / 2 + 3, 0);
-  ctx.lineTo(handleDist - knobR, 0);
-  ctx.stroke();
-  // Knob.
-  const kg = ctx.createRadialGradient(handleDist - knobR * 0.3, -knobR * 0.3, 1, handleDist, 0, knobR);
-  kg.addColorStop(0, '#ffe9a8');
-  kg.addColorStop(1, '#d6a83a');
-  ctx.beginPath();
-  ctx.arc(handleDist, 0, knobR, 0, Math.PI * 2);
-  ctx.fillStyle = kg;
+  ctx.moveTo(L / 2 + 11, 0);
+  ctx.lineTo(L / 2 + 3, -5);
+  ctx.lineTo(L / 2 + 3, 5);
+  ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(90, 60, 10, 0.95)';
-  ctx.lineWidth = 1.2;
-  ctx.stroke();
-  // Circular-arrows glyph on the knob.
-  ctx.strokeStyle = 'rgba(70, 45, 5, 0.95)';
-  ctx.lineWidth = 1.3;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.arc(handleDist, 0, knobR * 0.5, -Math.PI * 0.75, Math.PI * 0.65);
-  ctx.stroke();
-  ctx.beginPath();
-  const tipA = -Math.PI * 0.75;
-  const tx = handleDist + Math.cos(tipA) * knobR * 0.5;
-  const ty = Math.sin(tipA) * knobR * 0.5;
-  ctx.moveTo(tx - 2.4, ty - 0.6);
-  ctx.lineTo(tx, ty);
-  ctx.lineTo(tx + 0.8, ty - 2.6);
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -1357,10 +1317,10 @@ function drawEditOverlay(ctx, w, h, world) {
   const lines = [
     'EDIT MODE — boat physics paused',
     'W A S D / ←↑→↓   Pan camera',
-    'Click             Select (always) / place on open water',
-    'Drag              Move selected',
-    'Drag ◯ knob       Rotate selected (free)',
-    'Wheel / [  ]      Rotate selected (±15° steps)',
+    'Click             Select / place on open water',
+    'Drag              Move selected (docks snap end-to-end)',
+    '[  ]  or  Wheel    Rotate selected (5°)',
+    'Shift + [ ] / Wheel  Rotate snap to 45°',
     'Delete            Remove selected',
     'Esc               Deselect',
   ];

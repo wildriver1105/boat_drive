@@ -2,7 +2,7 @@
 //   • Keyboard state for the boat (W/S/A/D, arrows, Space)
 //   • Mouse drag on the throttle handle and the helm wheel (drive mode)
 //   • Edit-mode interactions: click to place / select, drag to move,
-//     wheel / [ ] to rotate, Delete to remove
+//     [ ] (or wheel) to rotate — hold Shift for 45° snapping, Delete to remove
 //
 // While world.edit.mode is true, pointer events are routed to the editor
 // instead of the throttle / helm widgets (which are hidden anyway).
@@ -17,21 +17,16 @@ import {
   hitTestThruster,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M } from './constants.js';
-import {
-  createEntity,
-  findEntityAt,
-  hitTestRotationHandle,
-  snapDockPose,
-} from './entities.js';
+import { createEntity, findEntityAt, snapDockPose } from './entities.js';
 import { saveWorld } from './world.js';
 
-const ROTATE_STEP = Math.PI / 12; // 15° per key press / wheel notch
+const ROTATE_FINE = Math.PI / 36; // 5° per step (free rotation)
+const ROTATE_SNAP = Math.PI / 4;  // 45° increments when Shift is held
 
 export function createInput({ canvas, world }) {
   const keys = new Set();
   let draggingThrottle = false;
   let draggingHelm = false;
-  let rotatingEntity = false;
   // Mouse-held thruster rocker: { unit: 'bow'|'stern', dir: -1|+1 } | null.
   // Momentary — active only while the button is physically held.
   let heldThruster = null;
@@ -67,12 +62,15 @@ export function createInput({ canvas, world }) {
       removeSelected();
       return true;
     }
-    if (e.code === 'BracketLeft') {
-      rotateSelected(-ROTATE_STEP);
+    // [ / ] rotate the selection. With Shift, snap to 0/45/90/… increments.
+    if (e.code === 'BracketLeft' || e.code === 'Comma') {
+      if (e.shiftKey) rotateSnap(-1);
+      else rotateSelected(-ROTATE_FINE);
       return true;
     }
-    if (e.code === 'BracketRight') {
-      rotateSelected(+ROTATE_STEP);
+    if (e.code === 'BracketRight' || e.code === 'Period') {
+      if (e.shiftKey) rotateSnap(+1);
+      else rotateSelected(+ROTATE_FINE);
       return true;
     }
     if (e.code === 'Escape') {
@@ -94,15 +92,40 @@ export function createInput({ canvas, world }) {
     }
   }
 
-  function rotateSelected(delta) {
+  function selectedEntity() {
     const id = world.edit.selectedId;
-    if (id == null) return;
-    const e = world.entities.find((en) => en.id === id);
+    if (id == null) return null;
+    return world.entities.find((en) => en.id === id) || null;
+  }
+
+  function normalizeHeading(h) {
+    if (h > Math.PI) return h - 2 * Math.PI;
+    if (h <= -Math.PI) return h + 2 * Math.PI;
+    return h;
+  }
+
+  // Free rotation by a fixed delta.
+  function rotateSelected(delta) {
+    const e = selectedEntity();
     if (!e) return;
-    e.heading += delta;
-    // Normalize for cleanliness.
-    if (e.heading > Math.PI) e.heading -= 2 * Math.PI;
-    else if (e.heading <= -Math.PI) e.heading += 2 * Math.PI;
+    e.heading = normalizeHeading(e.heading + delta);
+    saveWorld(world);
+  }
+
+  // Snap rotation: step to the next 45° increment in direction `dir` (±1).
+  function rotateSnap(dir) {
+    const e = selectedEntity();
+    if (!e) return;
+    const cur = e.heading;
+    // Round to the nearest increment first, then step one notch over so a
+    // press always moves (even from an already-aligned angle).
+    const k = Math.round(cur / ROTATE_SNAP);
+    let next = (k + dir) * ROTATE_SNAP;
+    // If current wasn't aligned, snapping toward dir should land on the
+    // adjacent aligned angle rather than skipping one.
+    const aligned = Math.abs(cur - k * ROTATE_SNAP) < 1e-3;
+    if (!aligned) next = (dir > 0 ? Math.ceil(cur / ROTATE_SNAP) : Math.floor(cur / ROTATE_SNAP)) * ROTATE_SNAP;
+    e.heading = normalizeHeading(next);
     saveWorld(world);
   }
 
@@ -136,7 +159,7 @@ export function createInput({ canvas, world }) {
   function updateCursor() {
     let next;
     if (world.edit.mode) {
-      next = world.edit.dragging || rotatingEntity ? 'grabbing' : 'crosshair';
+      next = world.edit.dragging ? 'grabbing' : 'crosshair';
     } else if (draggingThrottle || draggingHelm) {
       next = 'grabbing';
     } else if (hoverThrottle || hoverHelm) {
@@ -170,20 +193,10 @@ export function createInput({ canvas, world }) {
     const wp = screenToWorld(x, y, width, height);
     const tool = world.edit.tool;
 
-    // 1) Rotation handle of the current selection starts a rotate drag —
-    //    but ONLY with the Select tool. While a placement tool is active the
-    //    handle is inert (and not drawn), so it can't hijack a click meant
-    //    to place a new item close to the selected one.
-    const selected = world.entities.find((en) => en.id === world.edit.selectedId);
-    if (tool === 'select' && selected && hitTestRotationHandle(wp.x, wp.y, selected)) {
-      rotatingEntity = true;
-      updateCursor();
-      return;
-    }
-
-    // 2) Clicking an existing entity selects it (and starts a move drag) —
-    //    in ANY tool, so you never stack a new boat on top of one you meant
-    //    to grab. Placement only happens on open water.
+    // Clicking an existing entity selects it (and starts a move drag) — in
+    // ANY tool, so you never stack a new item on top of one you meant to
+    // grab. Placement only happens on open water. Rotation is keyboard-only
+    // ([ / ], Shift for 45° snap) so it never fights placement.
     const hit = findEntityAt(wp.x, wp.y, world.entities);
     if (hit) {
       world.edit.selectedId = hit.id;
@@ -213,15 +226,11 @@ export function createInput({ canvas, world }) {
   }
 
   function handleEditMouseMove(x, y, width, height) {
-    if (!world.edit.dragging && !rotatingEntity) return;
+    if (!world.edit.dragging) return;
     const wp = screenToWorld(x, y, width, height);
     const e = world.entities.find((en) => en.id === world.edit.selectedId);
     if (!e) return;
-    if (rotatingEntity) {
-      // The entity turns to face the mouse — bow follows the handle.
-      e.heading = Math.atan2(wp.y - e.y, wp.x - e.x);
-      world.edit.dirty = true;
-    } else {
+    {
       e.x = wp.x - world.edit.dragOffset.x;
       e.y = wp.y - world.edit.dragOffset.y;
       // Docks snap end-to-end to a nearby dock while dragging.
@@ -238,18 +247,18 @@ export function createInput({ canvas, world }) {
   }
 
   function handleEditMouseUp() {
-    if (world.edit.dragging || rotatingEntity) {
+    if (world.edit.dragging) {
       world.edit.dragging = false;
-      rotatingEntity = false;
       saveWorld(world);
       updateCursor();
     }
   }
 
-  function handleEditWheel(deltaY) {
+  function handleEditWheel(deltaY, shiftKey) {
     if (world.edit.selectedId == null) return;
     const dir = deltaY > 0 ? 1 : -1;
-    rotateSelected(dir * ROTATE_STEP);
+    if (shiftKey) rotateSnap(dir);
+    else rotateSelected(dir * ROTATE_FINE);
   }
 
   // ---------- Mouse ----------
@@ -290,13 +299,13 @@ export function createInput({ canvas, world }) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
       // Placement-ghost anchor: only while idle and actually over the
       // canvas (not the toolbar or other HTML overlays).
-      if (!world.edit.dragging && !rotatingEntity && e.target === canvas) {
+      if (!world.edit.dragging && e.target === canvas) {
         world.edit.hover = screenToWorld(p.x, p.y, p.width, p.height);
       } else {
         world.edit.hover = null;
       }
       updateCursor();
-      if (world.edit.dragging || rotatingEntity) e.preventDefault();
+      if (world.edit.dragging) e.preventDefault();
       return;
     }
 
@@ -335,7 +344,7 @@ export function createInput({ canvas, world }) {
   const onWheel = (e) => {
     if (!world.edit.mode) return;
     if (world.edit.selectedId == null) return;
-    handleEditWheel(e.deltaY);
+    handleEditWheel(e.deltaY, e.shiftKey);
     e.preventDefault();
   };
 
@@ -381,7 +390,7 @@ export function createInput({ canvas, world }) {
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
-      if (world.edit.dragging || rotatingEntity) e.preventDefault();
+      if (world.edit.dragging) e.preventDefault();
       return;
     }
 
