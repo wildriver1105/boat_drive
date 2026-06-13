@@ -15,6 +15,7 @@ import {
   ROT_HANDLE_RADIUS_M,
   presetById,
   findEntityAt,
+  snapDockPose,
 } from './entities.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
@@ -264,9 +265,11 @@ function drawEntities(ctx, w, h, world) {
     else if (e.category === 'buoy') drawBuoyEntity(ctx, e, world.time);
     else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
 
-    // Selection highlight + rotation-front indicator.
+    // Selection highlight + rotation-front indicator. The rotation knob only
+    // shows with the Select tool — during placement it would be inert and
+    // could be mistaken for a target, so we hide it.
     if (world.edit.mode && world.edit.selectedId === e.id) {
-      drawEntitySelectionFrame(ctx, e);
+      drawEntitySelectionFrame(ctx, e, world.edit.tool === 'select');
     }
 
     ctx.restore();
@@ -1207,7 +1210,7 @@ function drawCatamaranTop(ctx, L, W, accent) {
   drawEntitySeat(ctx, -half * 0.64, 0, Math.max(6, off * 0.36));
 }
 
-function drawEntitySelectionFrame(ctx, e) {
+function drawEntitySelectionFrame(ctx, e, showHandle = true) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
   ctx.save();
@@ -1216,6 +1219,11 @@ function drawEntitySelectionFrame(ctx, e) {
   ctx.lineWidth = 1.6;
   ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
   ctx.setLineDash([]);
+
+  if (!showHandle) {
+    ctx.restore();
+    return;
+  }
 
   // Rotation handle — stick + knob beyond the bow. Drag it to rotate the
   // entity; geometry matches hitTestRotationHandle in entities.js.
@@ -1271,7 +1279,7 @@ function drawPlacementGhost(ctx, w, h, world) {
   if (findEntityAt(hover.x, hover.y, world.entities)) return;
 
   const ghost = {
-    id: p.id,
+    id: '__ghost__',
     presetId: p.id,
     category: p.category,
     x: hover.x,
@@ -1283,13 +1291,26 @@ function drawPlacementGhost(ctx, w, h, world) {
     sail: p.sail,
     cabin: p.cabin,
   };
+  // Show exactly where a dock will land after magnetic snapping.
+  let snapped = false;
+  if (p.category === 'dock') {
+    const snap = snapDockPose(ghost, world.entities);
+    if (snap) {
+      ghost.x = snap.x;
+      ghost.y = snap.y;
+      ghost.heading = snap.heading;
+      snapped = true;
+    }
+  }
+
   const L = p.length * PX_PER_M;
   const W = p.width * PX_PER_M;
-  const sx = w / 2 + (hover.x - world.camera.x) * PX_PER_M;
-  const sy = h / 2 + (hover.y - world.camera.y) * PX_PER_M;
+  const sx = w / 2 + (ghost.x - world.camera.x) * PX_PER_M;
+  const sy = h / 2 + (ghost.y - world.camera.y) * PX_PER_M;
 
   ctx.save();
   ctx.translate(sx, sy);
+  ctx.rotate(ghost.heading);
   ctx.globalAlpha = 0.45;
   if (p.category === 'dock') {
     drawDockEntity(ctx, ghost);
@@ -1302,11 +1323,11 @@ function drawPlacementGhost(ctx, w, h, world) {
   } else {
     drawMotorboatTop(ctx, L, W, ghost, pickAccent(ghost));
   }
-  // Dashed footprint marker.
-  ctx.globalAlpha = 0.85;
+  // Dashed footprint marker — turns green when snapped to a neighbour.
+  ctx.globalAlpha = 0.9;
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = 'rgba(130, 220, 255, 0.95)';
-  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = snapped ? 'rgba(120, 240, 150, 0.98)' : 'rgba(130, 220, 255, 0.95)';
+  ctx.lineWidth = snapped ? 2 : 1.4;
   ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
   ctx.setLineDash([]);
   ctx.restore();

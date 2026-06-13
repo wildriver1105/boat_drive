@@ -109,3 +109,51 @@ export function findEntityAt(wx, wy, entities) {
   }
   return null;
 }
+
+// ---------- Dock magnetic snapping ----------
+// Docks join along their SHORT edges (the ends, at ±length/2). When the
+// end of the dock being placed/dragged comes within DOCK_SNAP_RADIUS_M of
+// another dock's end, snapDockPose returns a pose that makes them meet
+// flush and collinear — so you can chain planks into a continuous pier.
+
+export const DOCK_SNAP_RADIUS_M = 1.7;
+
+// The two short-edge centers (ends) of a dock in world coords.
+// `s` is +1 for the bow-side end, -1 for the stern-side end.
+function dockEnds(e) {
+  const c = Math.cos(e.heading);
+  const s = Math.sin(e.heading);
+  const half = e.length / 2;
+  return [
+    { s: 1, x: e.x + c * half, y: e.y + s * half },
+    { s: -1, x: e.x - c * half, y: e.y - s * half },
+  ];
+}
+
+// If `moving` (a dock) has an end near another dock's end, return a snapped
+// pose { x, y, heading } that joins them end-to-end and collinear. Null if
+// nothing is within range or `moving` isn't a dock.
+export function snapDockPose(moving, entities, radius = DOCK_SNAP_RADIUS_M) {
+  if (!moving || moving.category !== 'dock') return null;
+  const myEnds = dockEnds(moving);
+  const halfLen = moving.length / 2;
+  let best = null;
+  for (const o of entities) {
+    if (o === moving || o.id === moving.id || o.category !== 'dock') continue;
+    const oEnds = dockEnds(o);
+    for (const me of myEnds) {
+      for (const oe of oEnds) {
+        const d = Math.hypot(me.x - oe.x, me.y - oe.y);
+        if (d > radius || (best && d >= best.dist)) continue;
+        // Collinear: our connecting end faces theirs, dock extends outward.
+        // Same end-sign → antiparallel (heading + π); opposite → same heading.
+        const th = o.heading + (me.s * oe.s > 0 ? Math.PI : 0);
+        const x = oe.x - me.s * halfLen * Math.cos(th);
+        const y = oe.y - me.s * halfLen * Math.sin(th);
+        best = { dist: d, x, y, heading: th };
+      }
+    }
+  }
+  if (!best) return null;
+  return { x: best.x, y: best.y, heading: best.heading };
+}

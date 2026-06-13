@@ -17,7 +17,12 @@ import {
   hitTestThruster,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M } from './constants.js';
-import { createEntity, findEntityAt, hitTestRotationHandle } from './entities.js';
+import {
+  createEntity,
+  findEntityAt,
+  hitTestRotationHandle,
+  snapDockPose,
+} from './entities.js';
 import { saveWorld } from './world.js';
 
 const ROTATE_STEP = Math.PI / 12; // 15° per key press / wheel notch
@@ -165,10 +170,12 @@ export function createInput({ canvas, world }) {
     const wp = screenToWorld(x, y, width, height);
     const tool = world.edit.tool;
 
-    // 1) Rotation handle of the current selection wins over everything —
-    //    grabbing it starts a rotate drag regardless of the active tool.
+    // 1) Rotation handle of the current selection starts a rotate drag —
+    //    but ONLY with the Select tool. While a placement tool is active the
+    //    handle is inert (and not drawn), so it can't hijack a click meant
+    //    to place a new item close to the selected one.
     const selected = world.entities.find((en) => en.id === world.edit.selectedId);
-    if (selected && hitTestRotationHandle(wp.x, wp.y, selected)) {
+    if (tool === 'select' && selected && hitTestRotationHandle(wp.x, wp.y, selected)) {
       rotatingEntity = true;
       updateCursor();
       return;
@@ -185,10 +192,17 @@ export function createInput({ canvas, world }) {
     } else if (tool !== 'select') {
       const entity = createEntity(tool, wp.x, wp.y);
       if (entity) {
+        // Docks snap end-to-end to a nearby dock on placement.
+        const snap = snapDockPose(entity, world.entities);
+        if (snap) {
+          entity.x = snap.x;
+          entity.y = snap.y;
+          entity.heading = snap.heading;
+        }
         world.entities.push(entity);
         world.edit.selectedId = entity.id;
         world.edit.dragging = true;
-        world.edit.dragOffset = { x: 0, y: 0 };
+        world.edit.dragOffset = { x: wp.x - entity.x, y: wp.y - entity.y };
         world.edit.dirty = true;
       }
     } else {
@@ -210,6 +224,15 @@ export function createInput({ canvas, world }) {
     } else {
       e.x = wp.x - world.edit.dragOffset.x;
       e.y = wp.y - world.edit.dragOffset.y;
+      // Docks snap end-to-end to a nearby dock while dragging.
+      if (e.category === 'dock') {
+        const snap = snapDockPose(e, world.entities);
+        if (snap) {
+          e.x = snap.x;
+          e.y = snap.y;
+          e.heading = snap.heading;
+        }
+      }
       world.edit.dirty = true;
     }
   }
