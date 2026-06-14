@@ -31,6 +31,7 @@ export function createRenderer(canvas) {
     drawSea(ctx, w, h, world, fx);
     drawWindStreaks(ctx, w, h, world);
     drawWake(ctx, w, h, world, fx);
+    drawTrack(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
     drawBoat(ctx, w, h, world);
     if (world.edit.mode) drawPlacementGhost(ctx, w, h, world);
@@ -326,6 +327,69 @@ function drawWake(ctx, w, h, world, fx) {
   }
   ctx.restore();
   ctx.globalAlpha = 1;
+}
+
+// ---------- Tracking mode (F1-style racing-line review) ----------
+
+function drawTrack(ctx, w, h, world) {
+  const tr = world.track;
+  if (!tr || (tr.path.length < 2 && tr.ghosts.length === 0)) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const camX = world.camera.x;
+  const camY = world.camera.y;
+
+  // Continuous path — a glowing cyan racing line.
+  if (tr.path.length >= 2) {
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    // Soft underglow.
+    ctx.strokeStyle = 'rgba(80, 210, 255, 0.18)';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    for (let i = 0; i < tr.path.length; i++) {
+      const p = tr.path[i];
+      const px = cx + (p.x - camX) * PX_PER_M;
+      const py = cy + (p.y - camY) * PX_PER_M;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    // Bright core.
+    ctx.strokeStyle = 'rgba(140, 235, 255, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Pose ghosts — translucent hull silhouettes at the recorded heading, so
+  // the drift (stern sliding wide of the path) is visible. Older = fainter.
+  const half = (BOAT_LENGTH * PX_PER_M) / 2;
+  const halfW = (BOAT_WIDTH * PX_PER_M) / 2;
+  const n = tr.ghosts.length;
+  for (let i = 0; i < n; i++) {
+    const g = tr.ghosts[i];
+    const px = cx + (g.x - camX) * PX_PER_M;
+    const py = cy + (g.y - camY) * PX_PER_M;
+    if (px < -half || px > w + half || py < -half || py > h + half) continue;
+    const fade = 0.25 + 0.6 * (i / Math.max(1, n - 1)); // newer brighter
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(g.heading);
+    hullOutlinePath(ctx, half, halfW);
+    ctx.fillStyle = `rgba(255, 230, 130, ${(0.1 + fade * 0.16).toFixed(3)})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 220, 90, ${(0.3 + fade * 0.55).toFixed(3)})`;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    // Bow tick to read direction the hull was pointing.
+    ctx.beginPath();
+    ctx.moveTo(half, 0);
+    ctx.lineTo(half + 6, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // ---------- Entities (docks + parked boats placed by the map editor) ----------

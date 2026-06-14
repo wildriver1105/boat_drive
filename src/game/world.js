@@ -49,6 +49,20 @@ export function createWorld() {
       hover: null,
       dirty: false,
     },
+    // Tracking mode — records the boat's racing line for F1-style review:
+    //   path   = a dense, continuous polyline of where the hull went
+    //   ghosts = a snapshot of the boat's POSE (position + heading) every
+    //            `intervalS` seconds, so you can see how the hull was angled
+    //            (a drifting boat slides its stern out — the silhouette
+    //            orientation differs from the path direction).
+    track: {
+      on: false,
+      intervalS: 1.0,
+      path: [],
+      ghosts: [],
+      pathLast: null,
+      ghostAccum: 0,
+    },
   };
 }
 
@@ -84,6 +98,44 @@ export function saveWorld(world) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     world.edit.dirty = false;
   } catch (e) { /* ignore */ }
+}
+
+// Records the boat's track while tracking mode is on. Path points are
+// distance-sampled (continuous line); ghost poses are time-sampled at the
+// configured interval. Called from the loop in drive mode only.
+const TRACK_PATH_STEP_M = 0.4;   // min spacing between path points
+const TRACK_MAX_PATH = 8000;     // rolling cap
+const TRACK_MAX_GHOSTS = 600;
+
+export function updateTrack(world, dt) {
+  const tr = world.track;
+  if (!tr || !tr.on) return;
+  const b = world.boat;
+  if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) return;
+
+  // Continuous path — add a point whenever the hull has moved far enough.
+  const last = tr.pathLast;
+  if (!last || Math.hypot(b.x - last.x, b.y - last.y) >= TRACK_PATH_STEP_M) {
+    tr.path.push({ x: b.x, y: b.y });
+    tr.pathLast = { x: b.x, y: b.y };
+    if (tr.path.length > TRACK_MAX_PATH) tr.path.shift();
+  }
+
+  // Pose snapshots — sampled on the interval clock.
+  tr.ghostAccum += dt;
+  if (tr.ghostAccum >= tr.intervalS) {
+    tr.ghostAccum -= tr.intervalS;
+    tr.ghosts.push({ x: b.x, y: b.y, heading: b.heading, t: world.time });
+    if (tr.ghosts.length > TRACK_MAX_GHOSTS) tr.ghosts.shift();
+  }
+}
+
+export function clearTrack(world) {
+  const tr = world.track;
+  tr.path.length = 0;
+  tr.ghosts.length = 0;
+  tr.pathLast = null;
+  tr.ghostAccum = 0;
 }
 
 // Drop entities whose pose or footprint is not a finite number — protects

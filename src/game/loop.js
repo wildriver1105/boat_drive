@@ -1,5 +1,5 @@
 import { stepBoat } from './physics.js';
-import { updateTrails, updateWindStreaks, saveWorld } from './world.js';
+import { updateTrails, updateWindStreaks, updateTrack, saveWorld } from './world.js';
 import { stepEntities, resolveCollisions, guardDynamics } from './collisions.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from './constants.js';
 
@@ -40,6 +40,8 @@ export function createLoop({ world, input, render }) {
         // NaN watchdog — recover instead of freezing on a corrupted state.
         guardDynamics(world);
         if (moved || touched) entitiesDirty = true;
+        // Tracking mode records the racing line while driving.
+        updateTrack(world, FIXED_DT);
         // Drive mode: camera glues to the boat each step.
         world.camera.x = world.boat.x;
         world.camera.y = world.boat.y;

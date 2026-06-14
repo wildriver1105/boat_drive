@@ -23,8 +23,15 @@ import { saveWorld } from './world.js';
 const ROTATE_FINE = Math.PI / 36; // 5° per step (free rotation)
 const ROTATE_SNAP = Math.PI / 4;  // 45° increments when Shift is held
 
-export function createInput({ canvas, world }) {
+export function createInput({ canvas, world, onSelect }) {
   const keys = new Set();
+  // Notify React when the editor selection changes (for the toolbar buttons).
+  const notifySelect = () => {
+    if (!onSelect) return;
+    const id = world.edit.selectedId;
+    const e = id == null ? null : world.entities.find((en) => en.id === id) || null;
+    onSelect(e ? { id: e.id, presetId: e.presetId, category: e.category } : null);
+  };
   let draggingThrottle = false;
   let draggingHelm = false;
   // Mouse-held thruster rocker: { unit: 'bow'|'stern', dir: -1|+1 } | null.
@@ -75,6 +82,7 @@ export function createInput({ canvas, world }) {
     }
     if (e.code === 'Escape') {
       world.edit.selectedId = null;
+      notifySelect();
       return true;
     }
     return false;
@@ -88,6 +96,7 @@ export function createInput({ canvas, world }) {
       world.entities.splice(idx, 1);
       world.edit.selectedId = null;
       world.edit.dragging = false;
+      notifySelect();
       saveWorld(world);
     }
   }
@@ -222,6 +231,7 @@ export function createInput({ canvas, world }) {
       world.edit.selectedId = null;
       world.edit.dragging = false;
     }
+    notifySelect();
     updateCursor();
   }
 

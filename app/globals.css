@@ -100,6 +100,81 @@ canvas {
 }
 .settings-btn  { right: 262px; }
 .edit-btn      { right: 308px; }
+.track-btn     { right: 354px; font-size: 16px; }
+.track-btn.rec {
+  background: rgba(150, 30, 30, 0.7);
+  border-color: rgba(255, 130, 110, 0.6);
+  color: #ffd2c8;
+  animation: track-pulse 1.4s ease-in-out infinite;
+}
+@keyframes track-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 70, 50, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(220, 70, 50, 0); }
+}
+
+/* Tracking panel (below the buttons, right side) */
+.track-panel {
+  position: fixed;
+  top: 160px;
+  right: 16px;
+  width: 200px;
+  padding: 12px 14px;
+  background: rgba(6, 26, 40, 0.72);
+  border: 1px solid rgba(255, 150, 120, 0.4);
+  border-radius: 11px;
+  z-index: 12;
+  color: #e6f4fb;
+  backdrop-filter: blur(3px);
+}
+.track-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.track-rec {
+  color: #ff7a5e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  animation: track-blink 1.2s steps(2) infinite;
+}
+@keyframes track-blink { 50% { opacity: 0.35; } }
+.track-title {
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  color: rgba(180, 210, 230, 0.7);
+}
+.track-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: rgba(210, 230, 245, 0.85);
+  margin-bottom: 4px;
+}
+.track-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+}
+.track-panel input[type='range'] {
+  width: 100%;
+  accent-color: #ff8a6a;
+}
+.track-clear {
+  margin-top: 10px;
+  width: 100%;
+  background: rgba(20, 40, 56, 0.6);
+  border: 1px solid rgba(200, 235, 250, 0.25);
+  color: #e6f4fb;
+  font-size: 12px;
+  padding: 7px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.track-clear:hover {
+  background: rgba(120, 40, 40, 0.6);
+  border-color: rgba(245, 130, 110, 0.4);
+}
 
 /* ============================================
    Map editor toolbar (top, full width-ish)
@@ -125,6 +200,39 @@ canvas {
   padding: 10px 14px;
   overflow-x: auto;
   white-space: nowrap;
+}
+
+/* Selection action bar — sits just below the editor header, only mounted
+   while an item is selected, keeping the header clean otherwise. */
+.editor-selbar {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  max-width: calc(100vw - 32px);
+  background: linear-gradient(180deg, rgba(28, 52, 70, 0.94), rgba(10, 24, 34, 0.94));
+  border: 1px solid rgba(255, 210, 110, 0.45);
+  border-radius: 11px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  z-index: 21;
+  color: #e6f4fb;
+  white-space: nowrap;
+  animation: selbar-in 130ms ease;
+}
+@keyframes selbar-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.selbar-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #ffd98a;
+  padding: 0 4px;
 }
 .editor-mode-tag {
   background: #d6a83a;
@@ -163,9 +271,13 @@ canvas {
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.tool-btn:hover {
+.tool-btn:hover:not(:disabled) {
   background: rgba(34, 70, 96, 0.72);
   border-color: rgba(200, 235, 250, 0.35);
+}
+.tool-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
 }
 .tool-btn.active {
   background: linear-gradient(180deg, #3a7fa8, #1f5878);

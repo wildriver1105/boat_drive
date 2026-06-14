@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { createWorld, saveWorld } from '@/game/world';
+import { createWorld, saveWorld, clearTrack } from '@/game/world';
 import { createInput } from '@/game/input';
 import { createRenderer } from '@/game/render';
 import { createRenderer3D } from '@/game/render3d';
@@ -23,6 +23,11 @@ export default function BoatGame() {
   // Editor state — mirrored into world.edit each render.
   const [editMode, setEditMode] = useState(false);
   const [editTool, setEditTool] = useState('select');
+  const [selectedEntity, setSelectedEntity] = useState(null);
+
+  // Tracking mode (racing-line recorder).
+  const [trackOn, setTrackOn] = useState(false);
+  const [trackIntervalS, setTrackIntervalS] = useState(1);
 
   // View: '2d' (top-down), 'aerial' (3D chase), 'cockpit' (3D first-person).
   const [viewMode, setViewMode] = useState('2d');
@@ -60,7 +65,7 @@ export default function BoatGame() {
     };
     fitCanvas();
 
-    const input = createInput({ canvas, world });
+    const input = createInput({ canvas, world, onSelect: setSelectedEntity });
     const loop = createLoop({
       world,
       input,
@@ -128,6 +133,18 @@ export default function BoatGame() {
     world.boat.massScale = massScale;
   }, [massScale]);
 
+  // Bridge tracking state → world.track.
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.track.on = trackOn;
+  }, [trackOn]);
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.track.intervalS = trackIntervalS;
+  }, [trackIntervalS]);
+
   // Bridge React editor state → world.edit. Snap camera back to the boat
   // when leaving edit mode; freeze it where it is when entering.
   useEffect(() => {
@@ -154,6 +171,30 @@ export default function BoatGame() {
     if (!world) return;
     world.edit.tool = editTool;
   }, [editTool]);
+
+  // Editor actions on the currently-selected entity (driven by toolbar
+  // buttons — no keyboard focus required).
+  function rotateSelectedBy(rad) {
+    const world = worldRef.current;
+    if (!world || world.edit.selectedId == null) return;
+    const e = world.entities.find((en) => en.id === world.edit.selectedId);
+    if (!e) return;
+    e.heading += rad;
+    if (e.heading > Math.PI) e.heading -= 2 * Math.PI;
+    else if (e.heading <= -Math.PI) e.heading += 2 * Math.PI;
+    saveWorld(world);
+  }
+  function deleteSelected() {
+    const world = worldRef.current;
+    if (!world || world.edit.selectedId == null) return;
+    const idx = world.entities.findIndex((en) => en.id === world.edit.selectedId);
+    if (idx >= 0) {
+      world.entities.splice(idx, 1);
+      world.edit.selectedId = null;
+      setSelectedEntity(null);
+      saveWorld(world);
+    }
+  }
 
   // ESC closes the modal.
   useEffect(() => {
@@ -191,6 +232,15 @@ export default function BoatGame() {
         <>
           <button
             type="button"
+            className={`hud-btn track-btn ${trackOn ? 'rec' : ''}`}
+            onClick={() => setTrackOn((v) => !v)}
+            aria-label="Toggle tracking mode"
+            title="Tracking mode — record the racing line"
+          >
+            ◉
+          </button>
+          <button
+            type="button"
             className="hud-btn edit-btn"
             onClick={() => setEditMode(true)}
             aria-label="Enter edit mode"
@@ -210,10 +260,45 @@ export default function BoatGame() {
         </>
       )}
 
+      {!editMode && trackOn && (
+        <div className="track-panel">
+          <div className="track-panel-head">
+            <span className="track-rec">● REC</span>
+            <span className="track-title">TRACKING</span>
+          </div>
+          <label className="track-row" htmlFor="track-interval">
+            Snapshot every
+            <span className="track-val">{trackIntervalS.toFixed(2)}s</span>
+          </label>
+          <input
+            id="track-interval"
+            type="range"
+            min="0.25"
+            max="5"
+            step="0.25"
+            value={trackIntervalS}
+            onChange={(e) => setTrackIntervalS(Number(e.target.value))}
+          />
+          <button
+            type="button"
+            className="track-clear"
+            onClick={() => {
+              const w = worldRef.current;
+              if (w) clearTrack(w);
+            }}
+          >
+            Clear trail
+          </button>
+        </div>
+      )}
+
       {editMode && (
         <EditorToolbar
           tool={editTool}
           onTool={setEditTool}
+          selected={selectedEntity}
+          onRotate={rotateSelectedBy}
+          onDelete={deleteSelected}
           onExit={() => setEditMode(false)}
           onClearAll={() => {
             const world = worldRef.current;
@@ -271,11 +356,13 @@ function ViewToggle({ mode, onMode }) {
   );
 }
 
-function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
+function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onClearAll }) {
   const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock');
   const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
   const buoys = ENTITY_PRESETS.filter((p) => p.category === 'buoy');
+  const sel = !!selected;
   return (
+    <>
     <div className="editor-bar" role="toolbar" aria-label="Map editor">
       <div className="editor-bar-row">
         <span className="editor-mode-tag">EDIT</span>
@@ -287,6 +374,7 @@ function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
         >
           <span aria-hidden="true">↖</span> Select
         </button>
+
         <span className="tool-divider" />
         <span className="tool-group-label">Docks</span>
         {docks.map((d) => (
@@ -335,7 +423,41 @@ function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
         </button>
       </div>
     </div>
+
+    {/* Selection actions — appear under the header only when an item is
+        selected, so the header stays clean otherwise. */}
+    {sel && (
+      <div className="editor-selbar" role="toolbar" aria-label="Selected item actions">
+        <span className="selbar-label">{prettyName(selected.presetId)}</span>
+        <span className="tool-divider" />
+        <button type="button" className="tool-btn" onClick={() => onRotate(-Math.PI / 2)} title="Rotate 90° counter-clockwise">
+          ⟲ 90°
+        </button>
+        <button type="button" className="tool-btn" onClick={() => onRotate(Math.PI / 2)} title="Rotate 90° clockwise">
+          ⟳ 90°
+        </button>
+        <button type="button" className="tool-btn" onClick={() => onRotate(Math.PI)} title="Flip 180°">
+          ⤢ 180°
+        </button>
+        <button type="button" className="tool-btn" onClick={() => onRotate(-Math.PI / 12)} title="Nudge 15° counter-clockwise">
+          −15°
+        </button>
+        <button type="button" className="tool-btn" onClick={() => onRotate(Math.PI / 12)} title="Nudge 15° clockwise">
+          +15°
+        </button>
+        <span className="tool-divider" />
+        <button type="button" className="tool-btn danger" onClick={onDelete} title="Delete selected (or press Delete)">
+          🗑 Delete
+        </button>
+      </div>
+    )}
+    </>
   );
+}
+
+function prettyName(presetId) {
+  const p = ENTITY_PRESETS.find((q) => q.id === presetId);
+  return p ? p.label : 'Selected';
 }
 
 function SettingsModal({
