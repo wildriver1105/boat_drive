@@ -47,7 +47,23 @@ export function createRenderer(canvas) {
     drawInfoPanel(ctx, w, h, world);
   }
 
-  return { draw };
+  // Controls-only overlay for the 3D views: a transparent layer with just the
+  // helm / throttle / thruster widgets + HUD, drawn ON TOP of the WebGL
+  // canvas. Reuses the exact same hit-tested widgets the input layer drives,
+  // so they're mouse-controllable from the cockpit just like in 2D.
+  function drawControlsOnly(world) {
+    const dpr = canvas._dpr || 1;
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    drawHelm(ctx, w, h, world.boat);
+    drawThrottleHandle(ctx, w, h, world.boat);
+    drawThrusterPanel(ctx, w, h, world.boat, world.time);
+    drawInfoPanel(ctx, w, h, world);
+  }
+
+  return { draw, drawControlsOnly };
 }
 
 // ---------- Sea ----------

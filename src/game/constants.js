@@ -39,10 +39,10 @@ export const THROTTLE_CATCH_PULSE_TIME = 0.45;
 // speed. Applied as a lateral force at the stern so it both walks the stern
 // and yaws the hull. PROP_WALK_HAND = +1 models a right-hand prop: stern to
 // STARBOARD ahead, to PORT astern. Flip to -1 for a left-hand prop.
-export const PROP_WALK_FORCE = 130;          // N lateral at full ahead throttle
-export const PROP_WALK_REVERSE_SCALE = 3.0;  // astern prop walk is far stronger
+export const PROP_WALK_FORCE = 48;           // N lateral at full ahead throttle
+export const PROP_WALK_REVERSE_SCALE = 2.4;  // astern prop walk is stronger
 export const PROP_WALK_ARM = 2.6;            // applied near the stern / prop
-export const PROP_WALK_SPEED_FALLOFF = 0.1;  // authority ∝ 1/(1 + k·vFwd²)
+export const PROP_WALK_SPEED_FALLOFF = 0.14; // authority ∝ 1/(1 + k·vFwd²)
 export const PROP_WALK_HAND = 1;             // +1 right-hand prop, -1 left-hand
 
 // === Hydrodynamic drag ===

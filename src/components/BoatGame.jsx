@@ -4,26 +4,48 @@ import { useEffect, useRef, useState } from 'react';
 import { createWorld, saveWorld } from '@/game/world';
 import { createInput } from '@/game/input';
 import { createRenderer } from '@/game/render';
+import { createRenderer3D } from '@/game/render3d';
 import { createLoop } from '@/game/loop';
 import { ENTITY_PRESETS } from '@/game/entities';
 
 const KN_TO_MS = 0.514444;
 
 export default function BoatGame() {
-  const canvasRef = useRef(null);
+  const canvasRef = useRef(null);     // 2D overlay (always on top, handles input)
+  const canvas3dRef = useRef(null);   // WebGL layer (3D scene, behind)
   const worldRef = useRef(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [windSpeedKn, setWindSpeedKn] = useState(0);
   const [windFromDeg, setWindFromDeg] = useState(0);
+  const [massScale, setMassScale] = useState(1);
 
   // Editor state — mirrored into world.edit each render.
   const [editMode, setEditMode] = useState(false);
   const [editTool, setEditTool] = useState('select');
 
+  // View: '2d' (top-down), 'aerial' (3D chase), 'cockpit' (3D first-person).
+  const [viewMode, setViewMode] = useState('2d');
+  const viewModeRef = useRef('2d');
+  const has3dRef = useRef(true);
+
   useEffect(() => {
     const canvas = canvasRef.current;
+    const canvas3d = canvas3dRef.current;
     if (!canvas) return;
+
+    const world = createWorld();
+    worldRef.current = world;
+
+    const renderer = createRenderer(canvas);
+    let renderer3d = null;
+    try {
+      if (canvas3d) renderer3d = createRenderer3D(canvas3d);
+    } catch (err) {
+      renderer3d = null;
+      has3dRef.current = false;
+      console.warn('3D view unavailable:', err);
+    }
 
     const fitCanvas = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -34,17 +56,24 @@ export default function BoatGame() {
       canvas.style.width = w + 'px';
       canvas.style.height = h + 'px';
       canvas._dpr = dpr;
+      if (renderer3d) renderer3d.resize(w, h);
     };
     fitCanvas();
 
-    const world = createWorld();
-    worldRef.current = world;
     const input = createInput({ canvas, world });
-    const renderer = createRenderer(canvas);
     const loop = createLoop({
       world,
       input,
-      render: (w) => renderer.draw(w),
+      render: (wld) => {
+        const mode = renderer3d ? viewModeRef.current : '2d';
+        if (mode === '2d') {
+          renderer.draw(wld);
+        } else {
+          const dpr = canvas._dpr || 1;
+          renderer3d.draw(wld, mode, canvas.width / dpr, canvas.height / dpr);
+          renderer.drawControlsOnly(wld);
+        }
+      },
     });
 
     window.addEventListener('resize', fitCanvas);
@@ -53,10 +82,36 @@ export default function BoatGame() {
     return () => {
       loop.stop();
       input.destroy();
+      if (renderer3d) renderer3d.dispose();
       window.removeEventListener('resize', fitCanvas);
       worldRef.current = null;
     };
   }, []);
+
+  // Mirror view mode into the loop and toggle the WebGL canvas visibility.
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    const c3 = canvas3dRef.current;
+    if (c3) c3.style.display = viewMode === '2d' ? 'none' : 'block';
+  }, [viewMode]);
+
+  // The map editor is top-down only — force 2D while editing.
+  useEffect(() => {
+    if (editMode) setViewMode('2d');
+  }, [editMode]);
+
+  // "V" cycles 2D → Aerial → Cockpit (ignored while editing or typing).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'v' && e.key !== 'V') return;
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.metaKey || e.ctrlKey || e.altKey || editMode || !has3dRef.current) return;
+      setViewMode((m) => (m === '2d' ? 'aerial' : m === 'aerial' ? 'cockpit' : '2d'));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editMode]);
 
   // Bridge React settings state → world.wind.
   useEffect(() => {
@@ -65,6 +120,13 @@ export default function BoatGame() {
     world.wind.speed = windSpeedKn * KN_TO_MS;
     world.wind.fromBearing = (windFromDeg * Math.PI) / 180;
   }, [windSpeedKn, windFromDeg]);
+
+  // Bridge mass / sensitivity → world.boat.massScale.
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.boat.massScale = massScale;
+  }, [massScale]);
 
   // Bridge React editor state → world.edit. Snap camera back to the boat
   // when leaving edit mode; freeze it where it is when entering.
@@ -118,7 +180,12 @@ export default function BoatGame() {
 
   return (
     <>
-      <canvas ref={canvasRef} tabIndex={0} aria-label="Boat drive game" />
+      <canvas ref={canvas3dRef} className="layer-3d" style={{ display: 'none' }} aria-hidden="true" />
+      <canvas ref={canvasRef} className="layer-2d" tabIndex={0} aria-label="Boat drive game" />
+
+      {!editMode && (
+        <ViewToggle mode={viewMode} onMode={setViewMode} />
+      )}
 
       {!editMode && (
         <>
@@ -166,8 +233,10 @@ export default function BoatGame() {
         <SettingsModal
           windSpeedKn={windSpeedKn}
           windFromDeg={windFromDeg}
+          massScale={massScale}
           onWindSpeedKn={setWindSpeedKn}
           onWindFromDeg={setWindFromDeg}
+          onMassScale={setMassScale}
           onReset={() => {
             setWindSpeedKn(0);
             setWindFromDeg(0);
@@ -176,6 +245,29 @@ export default function BoatGame() {
         />
       )}
     </>
+  );
+}
+
+function ViewToggle({ mode, onMode }) {
+  const opts = [
+    { id: '2d', label: '2D Map' },
+    { id: 'aerial', label: '3D Aerial' },
+    { id: 'cockpit', label: 'Cockpit' },
+  ];
+  return (
+    <div className="view-toggle" role="group" aria-label="View mode">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          className={`view-btn ${mode === o.id ? 'active' : ''}`}
+          onClick={() => onMode(o.id)}
+          title={o.label + ' (V to cycle)'}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -249,11 +341,15 @@ function EditorToolbar({ tool, onTool, onExit, onClearAll }) {
 function SettingsModal({
   windSpeedKn,
   windFromDeg,
+  massScale,
   onWindSpeedKn,
   onWindFromDeg,
+  onMassScale,
   onReset,
   onClose,
 }) {
+  const massLabel =
+    massScale < 0.85 ? 'light · twitchy' : massScale > 1.25 ? 'heavy · sluggish' : 'standard';
   return (
     <div
       className="modal-backdrop"
@@ -333,6 +429,35 @@ function SettingsModal({
             </div>
 
             <WindPreview speedKn={windSpeedKn} fromDeg={windFromDeg} />
+          </section>
+
+          <section className="setting-group">
+            <header className="group-header">
+              <span className="group-title">Boat handling</span>
+              <button type="button" className="link-btn" onClick={() => onMassScale(1)}>
+                Reset
+              </button>
+            </header>
+            <div className="row">
+              <label htmlFor="mass-scale">
+                Mass <span className="muted">(heavier = less sensitive)</span>
+                <span className="value">{massScale.toFixed(2)}× · {massLabel}</span>
+              </label>
+              <input
+                id="mass-scale"
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.05"
+                value={massScale}
+                onChange={(e) => onMassScale(Number(e.target.value))}
+              />
+              <div className="ticks">
+                <span>light</span>
+                <span>standard</span>
+                <span>heavy</span>
+              </div>
+            </div>
           </section>
         </div>
         <div className="modal-footer">

@@ -78,13 +78,14 @@ export function stepEntities(world, dt) {
 
 // Build the body list: player + all entities, with inverse mass/inertia.
 function collectBodies(world) {
+  const ms = world.boat.massScale > 0 ? world.boat.massScale : 1;
   const bodies = [
     {
       obj: world.boat,
       L: BOAT_LENGTH,
       W: BOAT_WIDTH,
-      invM: 1 / MASS,
-      invI: 1 / I_Z,
+      invM: 1 / (MASS * ms),
+      invI: 1 / (I_Z * ms),
       isStatic: false,
       isEntity: false,
     },

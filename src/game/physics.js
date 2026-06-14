@@ -70,6 +70,10 @@ export function createBoat(x = 0, y = 0, heading = 0) {
     sternLocked: false,
     bowTrip: THRUSTER_TRIP_BASE,
     sternTrip: THRUSTER_TRIP_BASE,
+    // Mass multiplier (set from the Settings modal). Higher = heavier hull:
+    // more momentum, slower to accelerate and turn, and prop walk / thruster
+    // kicks feel weaker (acceleration = force / mass). 1.0 = nominal.
+    massScale: 1,
   };
 }
 
@@ -301,10 +305,15 @@ export function stepBoat(boat, keys, wind, dt) {
     -THRUSTER_STERN_ARM * F_sternT +
     -PROP_WALK_ARM * F_propwalk;
 
-  // Body → world acceleration.
-  const ax = (F_body_x * cosH - F_body_y * sinH) / MASS;
-  const ay = (F_body_x * sinH + F_body_y * cosH) / MASS;
-  const alpha = tau / I_Z;
+  // Body → world acceleration. Effective mass/inertia scale with the user's
+  // mass setting, so a heavier boat is less sensitive to every force
+  // (including prop walk and thrusters) while keeping the same top speed.
+  const ms = boat.massScale > 0 ? boat.massScale : 1;
+  const mass = MASS * ms;
+  const izz = I_Z * ms;
+  const ax = (F_body_x * cosH - F_body_y * sinH) / mass;
+  const ay = (F_body_x * sinH + F_body_y * cosH) / mass;
+  const alpha = tau / izz;
 
   // Semi-implicit Euler.
   boat.vx += ax * dt;
