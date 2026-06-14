@@ -18,6 +18,7 @@ export function createRenderer(canvas) {
   const fx = createFx();
   fx.patA = ctx.createPattern(fx.noiseA, 'repeat');
   fx.patB = ctx.createPattern(fx.noiseB, 'repeat');
+  fx.patC = ctx.createPattern(fx.noiseC, 'repeat');
 
   function draw(world) {
     const dpr = canvas._dpr || 1;
@@ -56,36 +57,111 @@ function drawSea(ctx, w, h, world, fx) {
   const cam = world.camera;
   const camPxX = cam.x * PX_PER_M;
   const camPxY = cam.y * PX_PER_M;
+  const windSpeed = world.wind ? world.wind.speed : 0;
 
-  // Deep-water base gradient.
+  // Deep-water base: vertical gradient (horizon-darker top → warmer near
+  // water) layered with a radial brightening around the camera so the patch
+  // of sea under the boat reads as lit and the distance falls into depth.
   const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#08344e');
-  grad.addColorStop(0.55, '#0b5174');
-  grad.addColorStop(1, '#0e6b8e');
+  grad.addColorStop(0, '#072c43');
+  grad.addColorStop(0.5, '#0a4866');
+  grad.addColorStop(1, '#0d6186');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 
-  // Two pre-rendered noise layers, world-anchored but drifting in different
-  // directions over time. Their interference shimmers like open water —
-  // the Canvas-2D stand-in for a water shader.
-  drawTileLayer(ctx, fx, fx.patA, w, h, -camPxX + t * 4.2, -camPxY + t * 2.3, 1.0, 0.5);
-  drawTileLayer(ctx, fx, fx.patB, w, h, -camPxX - t * 2.7, -camPxY + t * 5.4, 1.9, 0.55);
+  const depth = ctx.createRadialGradient(
+    w * 0.5, h * 0.5, Math.min(w, h) * 0.1,
+    w * 0.5, h * 0.5, Math.hypot(w, h) * 0.62
+  );
+  depth.addColorStop(0, 'rgba(70, 150, 180, 0.22)');
+  depth.addColorStop(0.55, 'rgba(20, 80, 110, 0.05)');
+  depth.addColorStop(1, 'rgba(2, 18, 32, 0.42)');
+  ctx.fillStyle = depth;
+  ctx.fillRect(0, 0, w, h);
 
-  // Long soft swell bands rolling slowly through the scene.
+  // Three pre-rendered noise scales, world-anchored, each drifting in its own
+  // direction and speed. Their interference — slow swell under fast ripples —
+  // is the Canvas-2D stand-in for a layered water shader.
+  drawTileLayer(ctx, fx, fx.patC, w, h, -camPxX + t * 1.4, -camPxY + t * 0.9, 3.2, 0.42);
+  drawTileLayer(ctx, fx, fx.patB, w, h, -camPxX - t * 2.7, -camPxY + t * 5.4, 1.9, 0.5);
+  drawTileLayer(ctx, fx, fx.patA, w, h, -camPxX + t * 4.6, -camPxY + t * 2.3, 1.0, 0.5);
+  // A second pass of the fine layer, mirrored drift, adds cross-chop.
+  drawTileLayer(ctx, fx, fx.patA, w, h, -camPxX * 1.0 - t * 3.3, -camPxY - t * 4.1, 1.35, 0.3);
+
+  // Specular sun sheen from the upper-right — a soft bright band that makes
+  // the surface look lit from a low sun. Drawn with 'lighter' for glow.
   ctx.save();
-  ctx.globalAlpha = 0.045;
-  ctx.fillStyle = '#cfeefb';
-  const bandSpacing = 130;
-  let bandOff = (camPxY - t * 14) % bandSpacing;
+  ctx.globalCompositeOperation = 'lighter';
+  const sheen = ctx.createLinearGradient(w, 0, w * 0.25, h);
+  sheen.addColorStop(0, 'rgba(255, 244, 210, 0.10)');
+  sheen.addColorStop(0.35, 'rgba(190, 230, 245, 0.05)');
+  sheen.addColorStop(0.7, 'rgba(190, 230, 245, 0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+
+  // Long soft swell crests rolling slowly through the scene.
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  ctx.fillStyle = '#d7f1fb';
+  const bandSpacing = 150;
+  let bandOff = (camPxY - t * 12) % bandSpacing;
   if (bandOff < 0) bandOff += bandSpacing;
   for (let i = -1; i < Math.ceil(h / bandSpacing) + 1; i++) {
-    const y = i * bandSpacing - bandOff + Math.sin(t * 0.5 + i * 1.3) * 9;
-    ctx.fillRect(0, y, w, 3);
+    const y = i * bandSpacing - bandOff + Math.sin(t * 0.45 + i * 1.3) * 11;
+    ctx.fillRect(0, y, w, 2.5);
   }
   ctx.restore();
 
-  // World-anchored twinkling sun sparkles.
+  // World-anchored twinkling sun sparkles, brighter toward the sun side.
   drawSparkles(ctx, w, h, camPxX, camPxY, t);
+
+  // Whitecaps — breaking foam crests that appear as the wind picks up.
+  drawWhitecaps(ctx, w, h, camPxX, camPxY, t, windSpeed, fx);
+}
+
+// Wind-driven breaking crests. Each ~150px world cell may own one whitecap
+// whose appearance is gated by wind strength and a per-cell phase, then it
+// flares and fades. World-anchored so they scroll naturally with the sea.
+function drawWhitecaps(ctx, w, h, camPxX, camPxY, t, windSpeed, fx) {
+  // Below a light breeze the sea has essentially no breaking crests.
+  const windFactor = Math.max(0, Math.min(1, (windSpeed - 3.5) / 9));
+  if (windFactor <= 0) return;
+
+  const G = 150;
+  const left = camPxX - w / 2;
+  const top = camPxY - h / 2;
+  const gx0 = Math.floor(left / G) - 1;
+  const gy0 = Math.floor(top / G) - 1;
+  const gx1 = Math.floor((left + w) / G) + 1;
+  const gy1 = Math.floor((top + h) / G) + 1;
+
+  ctx.save();
+  for (let gx = gx0; gx <= gx1; gx++) {
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const hsh = Math.sin(gx * 91.7 + gy * 47.3) * 23117.13;
+      const r1 = hsh - Math.floor(hsh);
+      // Only the densest r1 cells host caps; threshold drops as wind rises.
+      if (r1 > 0.15 + windFactor * 0.55) continue;
+      const hsh2 = Math.sin(gx * 13.1 + gy * 71.9) * 9931.7;
+      const r2 = hsh2 - Math.floor(hsh2);
+      const hsh3 = Math.sin(gx * 51.3 + gy * 19.7) * 1277.3;
+      const r3 = hsh3 - Math.floor(hsh3);
+      // Lifecycle: each cap flares over a short window on its own cycle.
+      const period = 3.5 + r2 * 3;
+      const u = (((t / period + r3) % 1) + 1) % 1;
+      const env = Math.sin(u * Math.PI);
+      if (env < 0.25) continue;
+      const a = (env - 0.25) / 0.75 * 0.5 * windFactor;
+      const cellX = gx * G + (0.2 + r2 * 0.6) * G - left;
+      const cellY = gy * G + (0.2 + r1 / 0.7 * 0.6) * G - top;
+      const size = (10 + r2 * 16) * (0.5 + env * 0.5);
+      ctx.globalAlpha = a;
+      ctx.drawImage(fx.foam, cellX - size / 2, cellY - size / 2, size, size * 0.7);
+    }
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 // Fill the viewport with a repeating pre-rendered tile, offset by (offX, offY)
@@ -129,9 +205,11 @@ function drawSparkles(ctx, w, h, camPxX, camPxY, t) {
       const h2 = n2 - Math.floor(n2);
       const tw = Math.sin(t * (0.8 + h2 * 1.6) + h1 * 6.283);
       if (tw < 0.55) continue;
-      const a = ((tw - 0.55) / 0.45) ** 2 * 0.55;
       const sx = gx * G + h1 * G - left;
       const sy = gy * G + h2 * G - top;
+      // Sun glitter: brighter toward the upper-right (the sun side).
+      const sun = 0.45 + 0.55 * ((sx / w) * 0.6 + (1 - sy / h) * 0.4);
+      const a = ((tw - 0.55) / 0.45) ** 2 * 0.6 * Math.max(0.25, Math.min(1, sun));
       const r = 1.5 + h2 * 2.5;
       ctx.globalAlpha = a;
       ctx.beginPath();

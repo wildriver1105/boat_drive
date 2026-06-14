@@ -24,6 +24,11 @@ import {
   THRUSTER_STERN_ARM,
   THRUSTER_RATE,
   THRUSTER_SPEED_FALLOFF,
+  PROP_WALK_FORCE,
+  PROP_WALK_REVERSE_SCALE,
+  PROP_WALK_ARM,
+  PROP_WALK_SPEED_FALLOFF,
+  PROP_WALK_HAND,
   THRUSTER_HEAT_RATE,
   THRUSTER_COOL_RATE,
   THRUSTER_HEAT_RESET,
@@ -242,6 +247,13 @@ export function stepBoat(boat, keys, wind, dt) {
   // flips the side the stern is kicked toward — exactly like a real boat.
   const F_rudder = -RUDDER_LIFT * boat.rudder * vFwd * Math.abs(vFwd);
 
+  // Prop walk — lateral kick at the stern from the turning prop. Scales with
+  // `engaged` (zero in the neutral band → no prop walk at neutral), far
+  // stronger astern, present at zero speed, fading as the boat gathers way.
+  const propWalkScale = engaged >= 0 ? 1 : PROP_WALK_REVERSE_SCALE;
+  const propWalkFalloff = 1 / (1 + PROP_WALK_SPEED_FALLOFF * vFwd * vFwd);
+  const F_propwalk = PROP_WALK_HAND * PROP_WALK_FORCE * engaged * propWalkScale * propWalkFalloff;
+
   // Tunnel thrusters: pure lateral jets at the bow / stern. Authority
   // washes out quadratically with forward speed — past a few knots the
   // tunnel flow collapses and they do next to nothing (docking aids only).
@@ -277,7 +289,7 @@ export function stepBoat(boat, keys, wind, dt) {
   // Sum of body-frame forces.
   const F_body_x = F_thrust + F_drag_fwd + F_wind_body_x;
   const F_body_y =
-    F_lat_bow + F_lat_stern + F_rudder + F_wind_body_y + F_bowT + F_sternT;
+    F_lat_bow + F_lat_stern + F_rudder + F_wind_body_y + F_bowT + F_sternT + F_propwalk;
 
   // Torque about CG: τ = Σ x_b · F_y for each lateral force at (x_b, 0).
   const tau =
@@ -286,7 +298,8 @@ export function stepBoat(boat, keys, wind, dt) {
     -RUDDER_ARM * F_rudder +
     WIND_ARM * F_wind_body_y +
     THRUSTER_BOW_ARM * F_bowT +
-    -THRUSTER_STERN_ARM * F_sternT;
+    -THRUSTER_STERN_ARM * F_sternT +
+    -PROP_WALK_ARM * F_propwalk;
 
   // Body → world acceleration.
   const ax = (F_body_x * cosH - F_body_y * sinH) / MASS;

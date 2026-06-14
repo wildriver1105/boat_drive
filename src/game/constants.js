@@ -31,6 +31,20 @@ export const THROTTLE_NEUTRAL_BAND = 0.12;
 // catch event — purely cosmetic, gives the user the "탁" feedback.
 export const THROTTLE_CATCH_PULSE_TIME = 0.45;
 
+// === Prop walk (transverse thrust of a single fixed propeller) ===
+// A turning prop kicks the stern sideways. It exists ONLY while the gearbox
+// is engaged (scales with `engaged`, so it is zero in the neutral band — a
+// real boat has no prop walk at neutral), is MUCH stronger astern than
+// ahead, works even at zero boat speed (docking aid), and fades with forward
+// speed. Applied as a lateral force at the stern so it both walks the stern
+// and yaws the hull. PROP_WALK_HAND = +1 models a right-hand prop: stern to
+// STARBOARD ahead, to PORT astern. Flip to -1 for a left-hand prop.
+export const PROP_WALK_FORCE = 130;          // N lateral at full ahead throttle
+export const PROP_WALK_REVERSE_SCALE = 3.0;  // astern prop walk is far stronger
+export const PROP_WALK_ARM = 2.6;            // applied near the stern / prop
+export const PROP_WALK_SPEED_FALLOFF = 0.1;  // authority ∝ 1/(1 + k·vFwd²)
+export const PROP_WALK_HAND = 1;             // +1 right-hand prop, -1 left-hand
+
 // === Hydrodynamic drag ===
 // Forward drag at CG (hull sliding through water along its long axis).
 export const DRAG_FWD_LIN = 50;

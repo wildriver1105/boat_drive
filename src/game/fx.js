@@ -12,12 +12,18 @@ const TILE_SIZE = 256;
 export function createFx() {
   return {
     tileSize: TILE_SIZE,
-    noiseA: makeWaterTile(TILE_SIZE, 64, 1234),
-    noiseB: makeWaterTile(TILE_SIZE, 44, 56789),
+    // Three scales of value-noise stand in for a layered water surface:
+    //   A — fine, high-contrast ripples
+    //   B — medium chop
+    //   C — large, soft ocean swell (the slow rolling undulation)
+    noiseA: makeWaterTile(TILE_SIZE, 70, 1234, { rMin: 8, rMax: 22, aMin: 0.05, aMax: 0.14 }),
+    noiseB: makeWaterTile(TILE_SIZE, 40, 56789, { rMin: 16, rMax: 40, aMin: 0.04, aMax: 0.1 }),
+    noiseC: makeWaterTile(TILE_SIZE, 16, 99173, { rMin: 48, rMax: 96, aMin: 0.05, aMax: 0.1, light: 0.55 }),
     foam: makeFoamSprite(64),
     // Patterns are created lazily by the renderer (needs its ctx).
     patA: null,
     patB: null,
+    patC: null,
     // Vignette overlay cache, rebuilt when the canvas size changes.
     vignette: null,
     vignetteW: 0,
@@ -44,18 +50,20 @@ function makeRng(seed) {
 
 // Tileable soft-blob value noise. Each blob is also drawn at ±size offsets
 // so the pattern wraps seamlessly. Mix of light and dark blobs gives the
-// water surface both highlights and depth shadows.
-function makeWaterTile(size, blobCount, seed) {
+// water surface both highlights and depth shadows. opts tunes blob size,
+// opacity, and the light/dark ratio for different scales of detail.
+function makeWaterTile(size, blobCount, seed, opts = {}) {
+  const { rMin = 10, rMax = 40, aMin = 0.05, aMax = 0.16, light = 0.6 } = opts;
   const c = makeCanvas(size, size);
   const g = c.getContext('2d');
   const rnd = makeRng(seed);
   for (let i = 0; i < blobCount; i++) {
     const x = rnd() * size;
     const y = rnd() * size;
-    const r = 10 + rnd() * 30;
-    const a = 0.05 + rnd() * 0.11;
-    const light = rnd() > 0.4;
-    const col = light ? '235, 250, 255' : '4, 22, 40';
+    const r = rMin + rnd() * (rMax - rMin);
+    const a = aMin + rnd() * (aMax - aMin);
+    const isLight = rnd() < light;
+    const col = isLight ? '225, 245, 255' : '3, 18, 34';
     for (const ox of [-size, 0, size]) {
       for (const oy of [-size, 0, size]) {
         const grad = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
