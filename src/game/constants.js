@@ -143,6 +143,19 @@ export const HELM_MAX_ANGLE = Math.PI * 0.75; // ±135°
 export const WIND_COEF = 12;
 export const WIND_ARM = 1.2;
 
+// === Mooring lines ===
+// A mooring line is a ROPE: it only pulls (never pushes), going taut once the
+// boat drifts past the line's rest length. Modelled as a spring-damper acting
+// at the boat's cleat, so a taut line both decelerates and yaws the hull —
+// e.g. gun the throttle against a bow line and the stern swings out.
+export const MOORING_STIFF = 2600;        // N per metre of stretch
+export const MOORING_DAMP = 1400;         // N·s/m along the line
+export const MOORING_MAX_FORCE = 26000;   // N — cap so a taut line can't explode
+export const MOORING_SNAP_M = 6;          // attach snap radius (m) on release
+export const MOORING_CLEAT_HIT_PX = 22;   // boat-cleat grab radius (screen px)
+export const MOORING_MIN_LEN = 1.0;       // shortest a line can be cranked to
+export const MOORING_MAX_LEN = 40;        // longest payable length
+
 // === Collisions ===
 // Parked boats get mass from their footprint so bigger hulls are harder to
 // shove. The player boat (MASS=1500 over 6×2.2 m) is ~115 kg/m² — use the

@@ -16,9 +16,10 @@ import {
   thrusterLayout,
   hitTestThruster,
 } from './ui-layout.js';
-import { HELM_MAX_ANGLE, PX_PER_M } from './constants.js';
+import { HELM_MAX_ANGLE, PX_PER_M, MOORING_SNAP_M, MOORING_CLEAT_HIT_PX } from './constants.js';
 import { createEntity, findEntityAt, snapDockPose } from './entities.js';
 import { saveWorld } from './world.js';
+import { BOAT_CLEATS, cleatWorld, mooringPoints, createMooringLine } from './mooring.js';
 
 const ROTATE_FINE = Math.PI / 36; // 5° per step (free rotation)
 const ROTATE_SNAP = Math.PI / 4;  // 45° increments when Shift is held
@@ -165,6 +166,47 @@ export function createInput({ canvas, world, onSelect }) {
     };
   }
 
+  // ---------- Mooring (drag a line from a boat cleat to a dock/bollard) ----------
+
+  // Start a line drag if the press landed on a boat cleat. Returns true if so.
+  function mooringDown(x, y, width, height) {
+    const cam = world.camera;
+    for (const c of BOAT_CLEATS) {
+      const cw = cleatWorld(world.boat, c);
+      const sx = width / 2 + (cw.x - cam.x) * PX_PER_M;
+      const sy = height / 2 + (cw.y - cam.y) * PX_PER_M;
+      if (Math.hypot(sx - x, sy - y) <= MOORING_CLEAT_HIT_PX) {
+        const wp = screenToWorld(x, y, width, height);
+        world.mooring.drag = { cleat: c, x: wp.x, y: wp.y };
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function mooringMove(x, y, width, height) {
+    const d = world.mooring.drag;
+    if (!d) return;
+    const wp = screenToWorld(x, y, width, height);
+    d.x = wp.x;
+    d.y = wp.y;
+  }
+
+  function mooringUp(x, y, width, height) {
+    const d = world.mooring.drag;
+    if (!d) return;
+    const wp = screenToWorld(x, y, width, height);
+    // Snap to the nearest dock cleat / bollard within range.
+    let best = null;
+    let bestD = MOORING_SNAP_M;
+    for (const pt of mooringPoints(world)) {
+      const dd = Math.hypot(pt.wx - wp.x, pt.wy - wp.y);
+      if (dd < bestD) { bestD = dd; best = pt; }
+    }
+    if (best) createMooringLine(world, d.cleat, best);
+    world.mooring.drag = null;
+  }
+
   function updateCursor() {
     let next;
     if (world.edit.mode) {
@@ -283,6 +325,13 @@ export function createInput({ canvas, world, onSelect }) {
       return;
     }
 
+    // Mooring mode: grabbing a boat cleat starts a line drag. If the press
+    // wasn't on a cleat, fall through so the helm/throttle still work.
+    if (world.mooring.mode && mooringDown(p.x, p.y, p.width, p.height)) {
+      e.preventDefault();
+      return;
+    }
+
     if (hitTestThrottle(p.x, p.y, p.layoutT)) {
       draggingThrottle = true;
       world.boat.throttleTarget = yToThrottleValue(p.y, p.layoutT);
@@ -304,6 +353,12 @@ export function createInput({ canvas, world, onSelect }) {
   };
   const onMouseMove = (e) => {
     const p = pointFromClient(e.clientX, e.clientY);
+
+    if (world.mooring.drag) {
+      mooringMove(p.x, p.y, p.width, p.height);
+      e.preventDefault();
+      return;
+    }
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
@@ -331,6 +386,12 @@ export function createInput({ canvas, world, onSelect }) {
     updateCursor();
   };
   const onMouseUp = (e) => {
+    if (world.mooring.drag) {
+      const p = pointFromClient(e.clientX, e.clientY);
+      mooringUp(p.x, p.y, p.width, p.height);
+      e.preventDefault();
+      return;
+    }
     if (world.edit.mode) {
       handleEditMouseUp();
       e.preventDefault();
@@ -377,6 +438,11 @@ export function createInput({ canvas, world, onSelect }) {
       return;
     }
 
+    if (world.mooring.mode && mooringDown(p.x, p.y, p.width, p.height)) {
+      e.preventDefault();
+      return;
+    }
+
     if (hitTestThrottle(p.x, p.y, p.layoutT)) {
       draggingThrottle = true;
       world.boat.throttleTarget = yToThrottleValue(p.y, p.layoutT);
@@ -398,6 +464,12 @@ export function createInput({ canvas, world, onSelect }) {
     const t = e.touches[0];
     const p = pointFromClient(t.clientX, t.clientY);
 
+    if (world.mooring.drag) {
+      mooringMove(p.x, p.y, p.width, p.height);
+      e.preventDefault();
+      return;
+    }
+
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
       if (world.edit.dragging) e.preventDefault();
@@ -413,6 +485,17 @@ export function createInput({ canvas, world, onSelect }) {
     e.preventDefault();
   };
   const onTouchEnd = () => {
+    if (world.mooring.drag) {
+      const d = world.mooring.drag;
+      // No release coords on touchend; finalize at the last drag world pos.
+      const cam = world.camera;
+      mooringUp(
+        canvas.clientWidth / 2 + (d.x - cam.x) * PX_PER_M,
+        canvas.clientHeight / 2 + (d.y - cam.y) * PX_PER_M,
+        canvas.clientWidth, canvas.clientHeight
+      );
+      return;
+    }
     if (world.edit.mode) {
       handleEditMouseUp();
       return;

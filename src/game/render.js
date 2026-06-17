@@ -11,6 +11,7 @@ import {
 import { throttleLayout, helmLayout, thrusterLayout } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
 import { presetById, findEntityAt, snapDockPose } from './entities.js';
+import { BOAT_CLEATS, cleatWorld, anchorWorld, mooringPoints } from './mooring.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
 export function createRenderer(canvas) {
@@ -33,6 +34,7 @@ export function createRenderer(canvas) {
     drawWake(ctx, w, h, world, fx);
     drawTrack(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
+    drawMooring(ctx, w, h, world);
     drawBoat(ctx, w, h, world);
     if (world.edit.mode) drawPlacementGhost(ctx, w, h, world);
     // Atmosphere pass: vignette + sun glare over the world, under the HUD.
@@ -392,6 +394,116 @@ function drawTrack(ctx, w, h, world) {
   }
 }
 
+// ---------- Mooring lines ----------
+
+function drawMooring(ctx, w, h, world) {
+  const mo = world.mooring;
+  if (!mo) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const camX = world.camera.x;
+  const camY = world.camera.y;
+  const toS = (wx, wy) => [cx + (wx - camX) * PX_PER_M, cy + (wy - camY) * PX_PER_M];
+
+  // Existing lines — red when taut, amber when slack.
+  for (const line of mo.lines) {
+    const cw = cleatWorld(world.boat, line);
+    const a = anchorWorld(world, line);
+    if (!a) continue;
+    const dist = Math.hypot(a.x - cw.x, a.y - cw.y);
+    const taut = dist > line.restLength + 0.05;
+    const [x1, y1] = toS(cw.x, cw.y);
+    const [x2, y2] = toS(a.x, a.y);
+    ctx.save();
+    ctx.lineCap = 'round';
+    if (taut) {
+      ctx.strokeStyle = 'rgba(255, 90, 70, 0.95)';
+      ctx.lineWidth = 2.6;
+    } else {
+      // Slack line sags toward the midpoint.
+      ctx.strokeStyle = 'rgba(235, 210, 150, 0.85)';
+      ctx.lineWidth = 2;
+    }
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    if (!taut) {
+      const sag = (line.restLength - dist) * PX_PER_M * 0.25;
+      ctx.quadraticCurveTo((x1 + x2) / 2, (y1 + y2) / 2 + Math.min(40, Math.max(6, sag)), x2, y2);
+    } else {
+      ctx.lineTo(x2, y2);
+    }
+    ctx.stroke();
+    // Anchor knot.
+    ctx.fillStyle = 'rgba(255, 240, 210, 0.95)';
+    ctx.beginPath();
+    ctx.arc(x2, y2, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (!mo.mode) return;
+
+  // Mooring-mode aids: boat cleats (cyan dots), reachable dock/bollard points,
+  // and the live drag line.
+  for (const c of BOAT_CLEATS) {
+    const cw = cleatWorld(world.boat, c);
+    const [sx, sy] = toS(cw.x, cw.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(120, 230, 255, 0.95)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(10, 40, 55, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  for (const pt of mooringPoints(world)) {
+    const [sx, sy] = toS(pt.wx, pt.wy);
+    if (sx < -10 || sx > w + 10 || sy < -10 || sy > h + 10) continue;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 220, 120, 0.9)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60, 40, 10, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (mo.drag) {
+    const cw = cleatWorld(world.boat, mo.drag.cleat);
+    const [x1, y1] = toS(cw.x, cw.y);
+    const [x2, y2] = toS(mo.drag.x, mo.drag.y);
+    // Highlight a snap target near the cursor.
+    let snap = null;
+    let bestD = 1e9;
+    for (const pt of mooringPoints(world)) {
+      const dd = Math.hypot(pt.wx - mo.drag.x, pt.wy - mo.drag.y);
+      if (dd < bestD) { bestD = dd; snap = pt; }
+    }
+    const within = snap && bestD <= 6;
+    ctx.save();
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = within ? 'rgba(120, 240, 150, 0.95)' : 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    if (within) {
+      const [tx, ty] = toS(snap.wx, snap.wy);
+      ctx.lineTo(tx, ty);
+    } else {
+      ctx.lineTo(x2, y2);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (within) {
+      const [tx, ty] = toS(snap.wx, snap.wy);
+      ctx.beginPath();
+      ctx.arc(tx, ty, 8, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(120, 240, 150, 0.95)';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
 // ---------- Entities (docks + parked boats placed by the map editor) ----------
 
 function drawEntities(ctx, w, h, world) {
@@ -414,6 +526,7 @@ function drawEntities(ctx, w, h, world) {
     ctx.rotate(e.heading);
 
     if (e.category === 'dock') drawDockEntity(ctx, e);
+    else if (e.category === 'bollard') drawBollardEntity(ctx, e);
     else if (e.category === 'buoy') drawBuoyEntity(ctx, e, world.time);
     else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
 
@@ -514,8 +627,83 @@ const BUOY_COLORS = {
   'buoy-mooring': { hi: '#ffffff', main: '#e8ecf0', dark: '#9aa6b2', top: '#2a6fd6' },
 };
 
+function drawBollardEntity(ctx, e) {
+  const r = (e.length * PX_PER_M) / 2;
+  // Water shadow.
+  ctx.beginPath();
+  ctx.arc(1.2, 1.8, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.fill();
+  // Cast-iron post (radial gradient).
+  const g = ctx.createRadialGradient(-r * 0.4, -r * 0.4, r * 0.2, 0, 0, r);
+  g.addColorStop(0, '#5a626c');
+  g.addColorStop(1, '#1c2127');
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = '#0a0d11';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Bevelled cap + a yellow safety band.
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(230, 190, 60, 0.9)';
+  ctx.lineWidth = Math.max(1.5, r * 0.18);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.34, 0, Math.PI * 2);
+  ctx.fillStyle = '#3a424c';
+  ctx.fill();
+}
+
 function drawBuoyEntity(ctx, e, time) {
   const r = (e.length * PX_PER_M) / 2;
+
+  // Lighthouse / channel beacon — a tower with a flashing light.
+  if (e.beacon) {
+    // Water shadow.
+    ctx.beginPath();
+    ctx.arc(2, 3, r * 0.8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fill();
+    // Base platform.
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#5b6672';
+    ctx.fill();
+    ctx.strokeStyle = '#222a33';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Tower (top-down: concentric red/white rings).
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+    ctx.fillStyle = '#f4f6f8';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+    ctx.strokeStyle = '#cf2f2a';
+    ctx.lineWidth = Math.max(2, r * 0.2);
+    ctx.stroke();
+    // Flashing lantern.
+    const flash = 0.5 + 0.5 * Math.sin(time * 3.5);
+    const lr = r * 0.3;
+    if (flash > 0.45) {
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.8);
+      glow.addColorStop(0, `rgba(255, 240, 170, ${(0.5 * (flash - 0.45) / 0.55).toFixed(3)})`);
+      glow.addColorStop(1, 'rgba(255, 240, 170, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, lr, 0, Math.PI * 2);
+    ctx.fillStyle = flash > 0.45 ? '#fff3b0' : '#7a6a2a';
+    ctx.fill();
+    return;
+  }
+
   const color = BUOY_COLORS[e.presetId] || BUOY_COLORS['buoy-yellow'];
 
   // Bobbing ripple — an expanding, fading ring with a per-buoy phase, so a
@@ -1408,6 +1596,7 @@ function drawPlacementGhost(ctx, w, h, world) {
     hull: p.hull,
     sail: p.sail,
     cabin: p.cabin,
+    beacon: p.beacon,
   };
   // Show exactly where a dock will land after magnetic snapping.
   let snapped = false;
@@ -1432,6 +1621,8 @@ function drawPlacementGhost(ctx, w, h, world) {
   ctx.globalAlpha = 0.45;
   if (p.category === 'dock') {
     drawDockEntity(ctx, ghost);
+  } else if (p.category === 'bollard') {
+    drawBollardEntity(ctx, ghost);
   } else if (p.category === 'buoy') {
     drawBuoyEntity(ctx, ghost, 0);
   } else if (p.hull === 'cat') {
@@ -1652,9 +1843,10 @@ function drawBoat(ctx, w, h, world) {
   // 13) Windshield — sits at the foredeck/cockpit boundary.
   drawWindshield(ctx, half, halfW);
 
-  // 14) Cleats (mooring fittings) at the gunwale corners.
+  // 14) Cleats (mooring fittings) at the gunwale corners + amidships.
   drawCleat(ctx, half * 0.45,  halfW * 0.84);
   drawCleat(ctx, half * 0.45, -halfW * 0.84);
+  drawCleat(ctx, 0, 0);
   drawCleat(ctx, -half * 0.82,  halfW * 0.88);
   drawCleat(ctx, -half * 0.82, -halfW * 0.88);
 

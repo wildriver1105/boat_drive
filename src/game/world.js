@@ -63,6 +63,15 @@ export function createWorld() {
       pathLast: null,
       ghostAccum: 0,
     },
+    // Mooring lines — ropes from the boat's cleats to docks / bollards.
+    // `mode` enables the drag-to-connect interaction (top-down only).
+    // `drag` holds an in-progress new line being dragged from a cleat.
+    mooring: {
+      mode: false,
+      lines: [],
+      drag: null,
+      nextId: 1,
+    },
   };
 }
 
@@ -93,6 +102,7 @@ export function saveWorld(world) {
       hull: e.hull,
       sail: e.sail,
       cabin: e.cabin,
+      beacon: e.beacon,
     }));
     const data = { entities };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));

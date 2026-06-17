@@ -101,6 +101,77 @@ canvas {
 .settings-btn  { right: 262px; }
 .edit-btn      { right: 308px; }
 .track-btn     { right: 354px; font-size: 16px; }
+.moor-btn      { right: 400px; font-size: 17px; }
+.moor-btn.on {
+  background: rgba(28, 80, 110, 0.8);
+  border-color: rgba(120, 220, 255, 0.6);
+  color: #bff0ff;
+}
+
+/* Mooring panel (right side, below the tracking panel slot) */
+.moor-panel {
+  position: fixed;
+  top: 160px;
+  right: 16px;
+  width: 250px;
+  padding: 12px 14px;
+  background: rgba(6, 26, 40, 0.78);
+  border: 1px solid rgba(120, 200, 245, 0.4);
+  border-radius: 11px;
+  z-index: 12;
+  color: #e6f4fb;
+  backdrop-filter: blur(3px);
+}
+.moor-head { margin-bottom: 6px; }
+.moor-title {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: rgba(180, 220, 245, 0.85);
+  font-weight: 700;
+}
+.moor-hint {
+  font-size: 11px;
+  color: rgba(180, 200, 215, 0.6);
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+.moor-empty {
+  font-size: 12px;
+  color: rgba(180, 200, 215, 0.55);
+  padding: 4px 0;
+}
+.moor-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(200, 235, 250, 0.1);
+  font-size: 12px;
+}
+.moor-name { flex: 1 1 auto; color: rgba(220, 240, 250, 0.9); }
+.moor-row.taut .moor-name { color: #ff8a72; }
+.moor-len {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+  width: 42px;
+  text-align: right;
+}
+.moor-row button {
+  background: rgba(20, 40, 56, 0.6);
+  border: 1px solid rgba(200, 235, 250, 0.22);
+  color: #e6f4fb;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 7px;
+}
+.moor-row button:hover { background: rgba(34, 70, 96, 0.75); }
+.moor-cast {
+  font-size: 11px !important;
+  color: #f6c9bf !important;
+  border-color: rgba(245, 130, 110, 0.35) !important;
+}
+.moor-cast:hover { background: rgba(120, 40, 40, 0.6) !important; }
 .track-btn.rec {
   background: rgba(150, 30, 30, 0.7);
   border-color: rgba(255, 130, 110, 0.6);

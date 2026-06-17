@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { cleatWorld, anchorWorld } from './mooring.js';
 
 // Wave field — kept in lock-step with the GLSL waveH() in the water material
 // so boats and buoys bob exactly with the surface they sit on. (x, z) are
@@ -103,6 +104,41 @@ export function createRenderer3D(canvas) {
   const ghostPool = [];
   const ghostRoot = new THREE.Group();
   scene.add(ghostRoot);
+
+  // Mooring lines — one short THREE.Line per active line, recoloured by tension.
+  const moorPool = [];
+  const moorRoot = new THREE.Group();
+  scene.add(moorRoot);
+
+  function syncMooring(world, time) {
+    const lines = world.mooring ? world.mooring.lines : [];
+    const bob = waveHeight(world.boat.x, world.boat.y, time);
+    while (moorPool.length < lines.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      const mat = new THREE.LineBasicMaterial({ color: '#ffd27a' });
+      const ln = new THREE.Line(geo, mat);
+      ln.frustumCulled = false;
+      moorPool.push({ ln, geo, mat });
+      moorRoot.add(ln);
+    }
+    for (let i = 0; i < moorPool.length; i++) {
+      const rec = moorPool[i];
+      if (i >= lines.length) { rec.ln.visible = false; continue; }
+      const line = lines[i];
+      const cw = cleatWorld(world.boat, line);
+      const a = anchorWorld(world, line);
+      if (!a) { rec.ln.visible = false; continue; }
+      const dist = Math.hypot(a.x - cw.x, a.y - cw.y);
+      const taut = dist > line.restLength + 0.05;
+      const pos = rec.geo.attributes.position.array;
+      pos[0] = cw.x; pos[1] = 0.62 + bob; pos[2] = cw.y;
+      pos[3] = a.x;  pos[4] = 0.5;        pos[5] = a.y;
+      rec.geo.attributes.position.needsUpdate = true;
+      rec.mat.color.set(taut ? '#ff5a46' : '#ffd27a');
+      rec.ln.visible = true;
+    }
+  }
 
   function syncTrack(world, time) {
     const tr = world.track;
@@ -199,6 +235,7 @@ export function createRenderer3D(canvas) {
 
     syncEntities(world);
     syncTrack(world, world.time);
+    syncMooring(world, world.time);
     water.update(world.time, b.x, b.y);
 
     let cam;
@@ -605,6 +642,7 @@ function makeBoat() {
   navLights(group, L, W, deckY);
   cleat(group, L * 0.42, W * 0.46, deckY);
   cleat(group, L * 0.42, -W * 0.46, deckY);
+  cleat(group, 0, 0, deckY); // amidships
   cleat(group, -L * 0.42, W * 0.46, deckY);
   cleat(group, -L * 0.42, -W * 0.46, deckY);
 
@@ -664,6 +702,54 @@ function makeEntityMesh(e) {
       }
     }
     return { group, baseY: 0.12, floats: true };
+  }
+
+  if (e.category === 'bollard') {
+    const r = e.length * 0.5;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.8, r, 0.9, 14), MAT.dark);
+    post.position.y = 0.45;
+    post.castShadow = true;
+    group.add(post);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 0.85, 12, 8), MAT.dark);
+    cap.position.y = 0.9;
+    cap.scale.y = 0.6;
+    group.add(cap);
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(r * 0.85, r * 0.85, 0.14, 14, 1, true),
+      new THREE.MeshStandardMaterial({ color: '#e6be3c', roughness: 0.5 })
+    );
+    band.position.y = 0.6;
+    group.add(band);
+    return { group, baseY: 0, floats: false };
+  }
+
+  if (e.category === 'buoy' && e.beacon) {
+    // Lighthouse / channel beacon.
+    const r = e.length * 0.5;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.1, 0.5, 16), MAT.pontoon);
+    base.position.y = 0.25;
+    group.add(base);
+    for (let i = 0; i < 4; i++) {
+      const seg = new THREE.Mesh(
+        new THREE.CylinderGeometry(r * (0.55 - i * 0.06), r * (0.62 - i * 0.06), 0.7, 16),
+        new THREE.MeshStandardMaterial({ color: i % 2 ? '#cf2f2a' : '#f4f6f8', roughness: 0.55 })
+      );
+      seg.position.y = 0.6 + i * 0.68;
+      group.add(seg);
+    }
+    const gallery = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.5, r * 0.5, 0.18, 14), MAT.dark);
+    gallery.position.y = 0.6 + 4 * 0.68;
+    group.add(gallery);
+    const lantern = new THREE.Mesh(
+      new THREE.CylinderGeometry(r * 0.36, r * 0.36, 0.5, 12),
+      new THREE.MeshStandardMaterial({ color: '#fff3b0', emissive: '#ffdf6e', emissiveIntensity: 0.9, roughness: 0.3 })
+    );
+    lantern.position.y = 0.6 + 4 * 0.68 + 0.34;
+    group.add(lantern);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, 0.4, 12), MAT.dark);
+    roof.position.y = 0.6 + 4 * 0.68 + 0.75;
+    group.add(roof);
+    return { group, baseY: 0, floats: false };
   }
 
   if (e.category === 'buoy') {

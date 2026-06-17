@@ -7,6 +7,7 @@ import { createRenderer } from '@/game/render';
 import { createRenderer3D } from '@/game/render3d';
 import { createLoop } from '@/game/loop';
 import { ENTITY_PRESETS } from '@/game/entities';
+import { lineState, adjustMooringLength, removeMooringLine } from '@/game/mooring';
 
 const KN_TO_MS = 0.514444;
 
@@ -28,6 +29,10 @@ export default function BoatGame() {
   // Tracking mode (racing-line recorder).
   const [trackOn, setTrackOn] = useState(false);
   const [trackIntervalS, setTrackIntervalS] = useState(1);
+
+  // Mooring mode + a polled snapshot of the active lines for the panel.
+  const [mooringOn, setMooringOn] = useState(false);
+  const [mooringLines, setMooringLines] = useState([]);
 
   // View: '2d' (top-down), 'aerial' (3D chase), 'cockpit' (3D first-person).
   const [viewMode, setViewMode] = useState('2d');
@@ -145,6 +150,39 @@ export default function BoatGame() {
     world.track.intervalS = trackIntervalS;
   }, [trackIntervalS]);
 
+  // Mooring mode → world.mooring.mode. Enabling forces the top-down view
+  // (you aim at cleats there). Entering the editor disables mooring.
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    world.mooring.mode = mooringOn;
+    if (mooringOn) setViewMode('2d');
+  }, [mooringOn]);
+  useEffect(() => {
+    if (editMode) setMooringOn(false);
+  }, [editMode]);
+
+  // Poll the live line list while mooring is on (lines are mutated outside React).
+  useEffect(() => {
+    if (!mooringOn) {
+      setMooringLines([]);
+      return;
+    }
+    const tick = () => {
+      const world = worldRef.current;
+      if (!world) return;
+      setMooringLines(
+        world.mooring.lines.map((l) => {
+          const st = lineState(world, l);
+          return { id: l.id, cleatId: l.cleatId, restLength: l.restLength, dist: st.dist, taut: st.taut };
+        })
+      );
+    };
+    tick();
+    const h = setInterval(tick, 150);
+    return () => clearInterval(h);
+  }, [mooringOn]);
+
   // Bridge React editor state → world.edit. Snap camera back to the boat
   // when leaving edit mode; freeze it where it is when entering.
   useEffect(() => {
@@ -232,6 +270,15 @@ export default function BoatGame() {
         <>
           <button
             type="button"
+            className={`hud-btn moor-btn ${mooringOn ? 'on' : ''}`}
+            onClick={() => setMooringOn((v) => !v)}
+            aria-label="Toggle mooring mode"
+            title="Mooring lines — drag from a cleat to a dock/bollard"
+          >
+            ⚓
+          </button>
+          <button
+            type="button"
             className={`hud-btn track-btn ${trackOn ? 'rec' : ''}`}
             onClick={() => setTrackOn((v) => !v)}
             aria-label="Toggle tracking mode"
@@ -289,6 +336,58 @@ export default function BoatGame() {
           >
             Clear trail
           </button>
+        </div>
+      )}
+
+      {!editMode && mooringOn && (
+        <div className="moor-panel">
+          <div className="moor-head">
+            <span className="moor-title">⚓ MOORING LINES</span>
+          </div>
+          <div className="moor-hint">
+            Drag from a cyan cleat on the boat to a dock cleat / bollard.
+          </div>
+          {mooringLines.length === 0 ? (
+            <div className="moor-empty">No lines made fast.</div>
+          ) : (
+            mooringLines.map((l) => (
+              <div className={`moor-row ${l.taut ? 'taut' : ''}`} key={l.id}>
+                <span className="moor-name">{cleatName(l.cleatId)}</span>
+                <span className="moor-len">{l.restLength.toFixed(1)}m</span>
+                <button
+                  type="button"
+                  title="Shorten (haul in)"
+                  onClick={() => {
+                    const w = worldRef.current;
+                    if (w) adjustMooringLength(w, l.id, -0.5);
+                  }}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  title="Lengthen (pay out)"
+                  onClick={() => {
+                    const w = worldRef.current;
+                    if (w) adjustMooringLength(w, l.id, 0.5);
+                  }}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="moor-cast"
+                  title="Cast off"
+                  onClick={() => {
+                    const w = worldRef.current;
+                    if (w) removeMooringLine(w, l.id);
+                  }}
+                >
+                  Cast off
+                </button>
+              </div>
+            ))
+          )}
         </div>
       )}
 
@@ -357,7 +456,7 @@ function ViewToggle({ mode, onMode }) {
 }
 
 function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onClearAll }) {
-  const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock');
+  const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock' || p.category === 'bollard');
   const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
   const buoys = ENTITY_PRESETS.filter((p) => p.category === 'buoy');
   const sel = !!selected;
@@ -458,6 +557,18 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onC
 function prettyName(presetId) {
   const p = ENTITY_PRESETS.find((q) => q.id === presetId);
   return p ? p.label : 'Selected';
+}
+
+function cleatName(id) {
+  return (
+    {
+      'bow-p': 'Bow (port)',
+      'bow-s': 'Bow (stbd)',
+      'mid': 'Midships',
+      'stern-p': 'Stern (port)',
+      'stern-s': 'Stern (stbd)',
+    }[id] || id
+  );
 }
 
 function SettingsModal({

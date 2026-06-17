@@ -1,6 +1,7 @@
 import { stepBoat } from './physics.js';
 import { updateTrails, updateWindStreaks, updateTrack, saveWorld } from './world.js';
 import { stepEntities, resolveCollisions, guardDynamics } from './collisions.js';
+import { applyMooring } from './mooring.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from './constants.js';
 
 const EDIT_PAN_SPEED = 28; // m/s — how fast WASD pans the camera when editing
@@ -33,6 +34,8 @@ export function createLoop({ world, input, render }) {
         panEditCamera(world, keys, FIXED_DT);
       } else {
         stepBoat(world.boat, keys, world.wind, FIXED_DT);
+        // Mooring rope tension acts on the boat right after its own forces.
+        applyMooring(world, FIXED_DT);
         // Pushed entities keep drifting; then settle all contacts (boat ↔
         // entity, entity ↔ entity; docks are immovable).
         const moved = stepEntities(world, FIXED_DT);

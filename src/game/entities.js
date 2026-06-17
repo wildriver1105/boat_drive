@@ -27,11 +27,14 @@ export const ENTITY_PRESETS = [
   { id: 'sail-dinghy', label: 'Sail dinghy', category: 'boat', length: 4,  width: 1.5, hull: 'mono', sail: 'dinghy' },
   // Multihull
   { id: 'catamaran',   label: 'Catamaran',   category: 'boat', length: 10, width: 5.5, hull: 'cat' },
-  // Buoys — anchored to the seabed: immovable colliders, never pushed.
-  { id: 'buoy-red',     label: 'Red buoy',     category: 'buoy', length: 1.0, width: 1.0 },
-  { id: 'buoy-green',   label: 'Green buoy',   category: 'buoy', length: 1.0, width: 1.0 },
-  { id: 'buoy-yellow',  label: 'Race mark',    category: 'buoy', length: 1.2, width: 1.2 },
-  { id: 'buoy-mooring', label: 'Mooring ball', category: 'buoy', length: 0.8, width: 0.8 },
+  // Buoys & marks — anchored to the seabed: immovable colliders.
+  { id: 'buoy-red',        label: 'Red buoy',     category: 'buoy', length: 1.0, width: 1.0 },
+  { id: 'buoy-green',      label: 'Green buoy',   category: 'buoy', length: 1.0, width: 1.0 },
+  { id: 'buoy-yellow',     label: 'Race mark',    category: 'buoy', length: 1.2, width: 1.2 },
+  { id: 'buoy-mooring',    label: 'Mooring ball', category: 'buoy', length: 0.8, width: 0.8 },
+  { id: 'buoy-lighthouse', label: 'Lighthouse',   category: 'buoy', length: 2.4, width: 2.4, beacon: true },
+  // Bollard — a round mooring post you can only make lines fast to.
+  { id: 'bollard',         label: 'Bollard',      category: 'bollard', length: 0.6, width: 0.6 },
 ];
 
 export function presetById(presetId) {
@@ -57,6 +60,7 @@ export function createEntity(presetId, x, y, heading = 0) {
     hull: p.hull,
     sail: p.sail,
     cabin: p.cabin,
+    beacon: p.beacon,
   };
 }
 
