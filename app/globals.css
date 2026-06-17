@@ -108,11 +108,12 @@ canvas {
   color: #bff0ff;
 }
 
-/* Mooring panel (right side, below the tracking panel slot) */
+/* Mooring panel — bottom-left, clear of the centred boat and the right-side
+   throttle/info panels, so cleat markers on the hull stay visible. */
 .moor-panel {
   position: fixed;
-  top: 160px;
-  right: 16px;
+  bottom: 16px;
+  left: 16px;
   width: 250px;
   padding: 12px 14px;
   background: rgba(6, 26, 40, 0.78);

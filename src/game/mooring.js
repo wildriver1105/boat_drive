@@ -22,7 +22,8 @@ import {
 export const BOAT_CLEATS = [
   { id: 'bow-p',   bx: BOAT_LENGTH * 0.42,  by: -BOAT_WIDTH * 0.4 },
   { id: 'bow-s',   bx: BOAT_LENGTH * 0.42,  by:  BOAT_WIDTH * 0.4 },
-  { id: 'mid',     bx: 0,                   by: 0 },
+  { id: 'mid-p',   bx: 0,                   by: -BOAT_WIDTH * 0.42 },
+  { id: 'mid-s',   bx: 0,                   by:  BOAT_WIDTH * 0.42 },
   { id: 'stern-p', bx: -BOAT_LENGTH * 0.42, by: -BOAT_WIDTH * 0.4 },
   { id: 'stern-s', bx: -BOAT_LENGTH * 0.42, by:  BOAT_WIDTH * 0.4 },
 ];

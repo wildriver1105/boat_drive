@@ -564,7 +564,8 @@ function cleatName(id) {
     {
       'bow-p': 'Bow (port)',
       'bow-s': 'Bow (stbd)',
-      'mid': 'Midships',
+      'mid-p': 'Midships (port)',
+      'mid-s': 'Midships (stbd)',
       'stern-p': 'Stern (port)',
       'stern-s': 'Stern (stbd)',
     }[id] || id

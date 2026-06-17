@@ -34,7 +34,7 @@ export function createRenderer(canvas) {
     drawWake(ctx, w, h, world, fx);
     drawTrack(ctx, w, h, world);
     drawEntities(ctx, w, h, world);
-    drawMooring(ctx, w, h, world);
+    drawMooringLines(ctx, w, h, world); // ropes pass under the hull
     drawBoat(ctx, w, h, world);
     if (world.edit.mode) drawPlacementGhost(ctx, w, h, world);
     // Atmosphere pass: vignette + sun glare over the world, under the HUD.
@@ -48,6 +48,10 @@ export function createRenderer(canvas) {
       drawEditOverlay(ctx, w, h, world);
     }
     drawInfoPanel(ctx, w, h, world);
+    // Mooring cleat markers / drag aids — TOPMOST so the stern cleats aren't
+    // hidden behind the hull, cockpit, or the helm HUD. Clicks on a cleat
+    // still beat the HUD in the input layer.
+    drawMooringAids(ctx, w, h, world);
   }
 
   // Controls-only overlay for the 3D views: a transparent layer with just the
@@ -396,7 +400,7 @@ function drawTrack(ctx, w, h, world) {
 
 // ---------- Mooring lines ----------
 
-function drawMooring(ctx, w, h, world) {
+function drawMooringLines(ctx, w, h, world) {
   const mo = world.mooring;
   if (!mo) return;
   const cx = w / 2;
@@ -440,31 +444,62 @@ function drawMooring(ctx, w, h, world) {
     ctx.fill();
     ctx.restore();
   }
+}
 
-  if (!mo.mode) return;
+// Mooring-mode aids, drawn ON TOP of the boat: cleat markers, reachable dock/
+// bollard points, and the live drag line.
+function drawMooringAids(ctx, w, h, world) {
+  const mo = world.mooring;
+  if (!mo || !mo.mode) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const camX = world.camera.x;
+  const camY = world.camera.y;
+  const toS = (wx, wy) => [cx + (wx - camX) * PX_PER_M, cy + (wy - camY) * PX_PER_M];
 
-  // Mooring-mode aids: boat cleats (cyan dots), reachable dock/bollard points,
-  // and the live drag line.
+  // Boat cleats — a prominent ringed dot so even stern cleats over the dark
+  // cockpit are unmistakable. The dot the mouse is hovering pulses.
   for (const c of BOAT_CLEATS) {
     const cw = cleatWorld(world.boat, c);
     const [sx, sy] = toS(cw.x, cw.y);
+    // Soft glow halo.
+    const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, 13);
+    glow.addColorStop(0, 'rgba(120, 230, 255, 0.55)');
+    glow.addColorStop(1, 'rgba(120, 230, 255, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(sx, sy, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(120, 230, 255, 0.95)';
+    ctx.arc(sx, sy, 13, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(10, 40, 55, 0.9)';
-    ctx.lineWidth = 1;
+    // White outer ring + cyan core.
+    ctx.beginPath();
+    ctx.arc(sx, sy, 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(120, 230, 255, 0.98)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(sx, sy, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(8, 30, 45, 0.95)';
+    ctx.fill();
   }
+  // Reachable dock / bollard mooring points.
   for (const pt of mooringPoints(world)) {
     const [sx, sy] = toS(pt.wx, pt.wy);
-    if (sx < -10 || sx > w + 10 || sy < -10 || sy > h + 10) continue;
+    if (sx < -14 || sx > w + 14 || sy < -14 || sy > h + 14) continue;
+    const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, 11);
+    glow.addColorStop(0, 'rgba(255, 215, 110, 0.5)');
+    glow.addColorStop(1, 'rgba(255, 215, 110, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 220, 120, 0.9)';
+    ctx.arc(sx, sy, 11, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(60, 40, 10, 0.8)';
-    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 220, 120, 0.98)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(70, 45, 10, 0.9)';
     ctx.stroke();
   }
   if (mo.drag) {
@@ -1843,10 +1878,11 @@ function drawBoat(ctx, w, h, world) {
   // 13) Windshield — sits at the foredeck/cockpit boundary.
   drawWindshield(ctx, half, halfW);
 
-  // 14) Cleats (mooring fittings) at the gunwale corners + amidships.
+  // 14) Cleats (mooring fittings) at the gunwale corners + midship sides.
   drawCleat(ctx, half * 0.45,  halfW * 0.84);
   drawCleat(ctx, half * 0.45, -halfW * 0.84);
-  drawCleat(ctx, 0, 0);
+  drawCleat(ctx, 0,  halfW * 0.84);
+  drawCleat(ctx, 0, -halfW * 0.84);
   drawCleat(ctx, -half * 0.82,  halfW * 0.88);
   drawCleat(ctx, -half * 0.82, -halfW * 0.88);
 

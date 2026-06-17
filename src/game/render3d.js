@@ -642,7 +642,8 @@ function makeBoat() {
   navLights(group, L, W, deckY);
   cleat(group, L * 0.42, W * 0.46, deckY);
   cleat(group, L * 0.42, -W * 0.46, deckY);
-  cleat(group, 0, 0, deckY); // amidships
+  cleat(group, 0, W * 0.46, deckY); // midship port/stbd
+  cleat(group, 0, -W * 0.46, deckY);
   cleat(group, -L * 0.42, W * 0.46, deckY);
   cleat(group, -L * 0.42, -W * 0.46, deckY);
 
