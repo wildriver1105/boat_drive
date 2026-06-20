@@ -109,34 +109,44 @@ export function createRenderer3D(canvas) {
   const moorPool = [];
   const moorRoot = new THREE.Group();
   scene.add(moorRoot);
+  // A unit cylinder (along +Y) — WebGL lines ignore lineWidth, so the rope is
+  // a thin tube instead, which is actually visible on the water.
+  const moorTubeGeo = new THREE.CylinderGeometry(0.06, 0.06, 1, 6, 1, true);
+  const _mUp = new THREE.Vector3(0, 1, 0);
+  const _mDir = new THREE.Vector3();
+  const _mMid = new THREE.Vector3();
+  const _mA = new THREE.Vector3();
+  const _mB = new THREE.Vector3();
 
   function syncMooring(world, time) {
     const lines = world.mooring ? world.mooring.lines : [];
     const bob = waveHeight(world.boat.x, world.boat.y, time);
     while (moorPool.length < lines.length) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-      const mat = new THREE.LineBasicMaterial({ color: '#ffd27a' });
-      const ln = new THREE.Line(geo, mat);
-      ln.frustumCulled = false;
-      moorPool.push({ ln, geo, mat });
-      moorRoot.add(ln);
+      const mat = new THREE.MeshStandardMaterial({ color: '#ffd27a', roughness: 0.7 });
+      const mesh = new THREE.Mesh(moorTubeGeo, mat);
+      mesh.frustumCulled = false;
+      moorPool.push({ mesh, mat });
+      moorRoot.add(mesh);
     }
     for (let i = 0; i < moorPool.length; i++) {
       const rec = moorPool[i];
-      if (i >= lines.length) { rec.ln.visible = false; continue; }
+      if (i >= lines.length) { rec.mesh.visible = false; continue; }
       const line = lines[i];
       const cw = cleatWorld(world.boat, line);
       const a = anchorWorld(world, line);
-      if (!a) { rec.ln.visible = false; continue; }
+      if (!a) { rec.mesh.visible = false; continue; }
       const dist = Math.hypot(a.x - cw.x, a.y - cw.y);
       const taut = dist > line.restLength + 0.05;
-      const pos = rec.geo.attributes.position.array;
-      pos[0] = cw.x; pos[1] = 0.62 + bob; pos[2] = cw.y;
-      pos[3] = a.x;  pos[4] = 0.5;        pos[5] = a.y;
-      rec.geo.attributes.position.needsUpdate = true;
+      _mA.set(cw.x, 0.62 + bob, cw.y);
+      _mB.set(a.x, 0.5, a.y);
+      _mDir.subVectors(_mB, _mA);
+      const len = _mDir.length() || 0.001;
+      _mMid.addVectors(_mA, _mB).multiplyScalar(0.5);
+      rec.mesh.position.copy(_mMid);
+      rec.mesh.scale.set(1, len, 1);
+      rec.mesh.quaternion.setFromUnitVectors(_mUp, _mDir.normalize());
       rec.mat.color.set(taut ? '#ff5a46' : '#ffd27a');
-      rec.ln.visible = true;
+      rec.mesh.visible = true;
     }
   }
 
