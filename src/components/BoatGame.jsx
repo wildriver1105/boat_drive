@@ -58,7 +58,10 @@ export default function BoatGame() {
     }
 
     const fitCanvas = () => {
-      const dpr = window.devicePixelRatio || 1;
+      const isMobile =
+        window.matchMedia?.('(pointer: coarse)').matches ||
+        /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
       const w = window.innerWidth;
       const h = window.innerHeight;
       canvas.width = Math.round(w * dpr);
@@ -86,7 +89,17 @@ export default function BoatGame() {
       },
     });
 
+    // Pause the loop only when the tab is actually hidden (backgrounded /
+    // minimized / screen off). We intentionally do NOT pause on window blur — a
+    // visible-but-unfocused window should keep animating, otherwise the canvas
+    // looks frozen whenever another window is in front.
+    const syncLoopRunning = () => {
+      if (document.hidden) loop.stop();
+      else loop.start();
+    };
+
     window.addEventListener('resize', fitCanvas);
+    document.addEventListener('visibilitychange', syncLoopRunning);
     loop.start();
 
     return () => {
@@ -94,6 +107,7 @@ export default function BoatGame() {
       input.destroy();
       if (renderer3d) renderer3d.dispose();
       window.removeEventListener('resize', fitCanvas);
+      document.removeEventListener('visibilitychange', syncLoopRunning);
       worldRef.current = null;
     };
   }, []);

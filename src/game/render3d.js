@@ -34,7 +34,10 @@ const SUN_POS = new THREE.Vector3(60, 18, -38);
 
 export function createRenderer3D(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const isMobile =
+    window.matchMedia?.('(pointer: coarse)').matches ||
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Filmic tone mapping is what gives PBR water its cinematic, non-flat look.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
