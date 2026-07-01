@@ -14,11 +14,37 @@ body {
   background: #06283d;
   color: #e6f4fb;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Kill rubber-band scroll / text selection so touch drags stay on the HUD. */
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
 canvas {
   display: block;
   cursor: crosshair;
+  /* The canvas owns all pointer gestures (drag helm / throttle, hold rockers);
+     never let the browser hijack them for scroll or pinch-zoom. */
+  touch-action: none;
+}
+
+/* On touch devices a text cursor over the canvas is meaningless. */
+@media (pointer: coarse) {
+  canvas { cursor: default; }
+}
+
+/* Remove the tap-delay + let buttons respond instantly to touch. */
+.hud-btn,
+.view-btn,
+.tool-btn,
+.moor-row button,
+.primary-btn,
+.modal-close,
+.link-btn,
+.track-clear {
+  touch-action: manipulation;
 }
 
 /* Stacked render layers: WebGL 3D underneath, 2D overlay (controls/scene) on
@@ -570,4 +596,95 @@ canvas {
 }
 .primary-btn:hover {
   background: linear-gradient(180deg, #4990bd, #266c91);
+}
+
+/* ============================================
+   Mobile / touch layout (narrow phones & small windows)
+   Mirrors the compact canvas HUD (helm bottom-left, thrusters bottom-centre,
+   throttle bottom-right; readout pill top-left). Keeps the top edge collision-
+   free: toggle top-LEFT, action buttons in a vertical stack top-RIGHT.
+   ============================================ */
+@media (max-width: 680px) {
+  /* View toggle → compact segmented control, pinned top-left. */
+  .view-toggle {
+    left: 12px;
+    top: 12px;
+    transform: none;
+  }
+  .view-btn {
+    padding: 8px 11px;
+    font-size: 12px;
+  }
+
+  /* Action buttons → vertical stack down the right edge. */
+  .hud-btn {
+    width: 46px;
+    height: 46px;
+    right: 12px !important;
+    font-size: 20px;
+  }
+  .moor-btn { top: 12px; font-size: 20px; }
+  .track-btn { top: 66px; font-size: 18px; }
+  .edit-btn { top: 120px; }
+  .settings-btn { top: 174px; }
+
+  /* Tracking + mooring panels → left column, below the toggle + readout pill,
+     clear of the bottom control cluster. */
+  .track-panel,
+  .moor-panel {
+    top: 132px;
+    left: 12px;
+    right: auto;
+    bottom: auto;
+    width: min(288px, calc(100vw - 24px));
+  }
+
+  /* Chunkier tap targets in the mooring rows. */
+  .moor-row {
+    gap: 6px;
+    padding: 8px 0;
+  }
+  .moor-row button {
+    padding: 8px 11px;
+    font-size: 14px;
+  }
+  .moor-cast {
+    font-size: 13px !important;
+  }
+
+  /* Editor toolbars → full-width, touch-scrollable. */
+  .editor-bar,
+  .editor-selbar {
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
+  }
+  .editor-bar-row,
+  .editor-selbar {
+    -webkit-overflow-scrolling: touch;
+  }
+  .editor-selbar {
+    top: 66px;
+    overflow-x: auto;
+  }
+  /* Override the centred slide-in so the full-width selbar doesn't jump. */
+  @keyframes selbar-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .tool-btn {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+
+  /* Bigger slider hit area for thumbs. */
+  input[type='range'] {
+    height: 28px;
+  }
+
+  /* Modal fills more of a small screen and stays reachable. */
+  .modal-card {
+    width: min(460px, calc(100vw - 20px));
+  }
 }

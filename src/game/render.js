@@ -8,7 +8,7 @@ import {
   THROTTLE_NEUTRAL_BAND,
   THROTTLE_CATCH_PULSE_TIME,
 } from './constants.js';
-import { throttleLayout, helmLayout, thrusterLayout } from './ui-layout.js';
+import { throttleLayout, helmLayout, thrusterLayout, isCompactUI } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
 import { presetById, findEntityAt, snapDockPose } from './entities.js';
 import { BOAT_CLEATS, cleatWorld, anchorWorld, mooringPoints } from './mooring.js';
@@ -43,7 +43,8 @@ export function createRenderer(canvas) {
       drawHelm(ctx, w, h, world.boat);
       drawThrottleHandle(ctx, w, h, world.boat);
       drawThrusterPanel(ctx, w, h, world.boat, world.time);
-      drawHints(ctx, w, h);
+      // Keyboard cheat-sheet is desktop-only — pointless clutter on touch.
+      if (!isCompactUI(w, h)) drawHints(ctx, w, h);
     } else {
       drawEditOverlay(ctx, w, h, world);
     }
@@ -2696,6 +2697,38 @@ function drawInfoPanel(ctx, w, h, world) {
   const speedKn = Math.hypot(boat.vx, boat.vy) * M_TO_KN;
   let headingDeg = (boat.heading * 180) / Math.PI;
   headingDeg = ((headingDeg % 360) + 360) % 360;
+
+  // Compact readout — a small pill tucked top-LEFT (below the mobile view
+  // toggle), leaving the top-right free for the vertical button stack.
+  if (isCompactUI(w, h)) {
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    const cw = windOn ? 152 : 122;
+    const chh = windOn ? 70 : 50;
+    const cpx = 12;
+    const cpy = 56;
+    roundedRect(ctx, cpx, cpy, cw, chh, 9);
+    ctx.fillStyle = 'rgba(6, 26, 40, 0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200, 235, 250, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e6f4fb';
+    ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(`${speedKn.toFixed(1)} kn`, cpx + 12, cpy + 22);
+    ctx.fillStyle = 'rgba(200, 220, 235, 0.75)';
+    ctx.font = '11px monospace';
+    ctx.fillText(`HDG ${headingDeg.toFixed(0).padStart(3, '0')}°`, cpx + 12, cpy + 40);
+    if (windOn) {
+      const windKn = wind.speed * M_TO_KN;
+      let fromDeg = (wind.fromBearing * 180) / Math.PI;
+      fromDeg = ((fromDeg % 360) + 360) % 360;
+      ctx.fillStyle = 'rgba(158, 215, 248, 0.9)';
+      ctx.fillText(`WND ${windKn.toFixed(0)}kn ${bearingToCardinal(fromDeg)}`, cpx + 12, cpy + 58);
+    }
+    ctx.restore();
+    return;
+  }
 
   const panelW = 230;
   const panelH = windOn ? 132 : 70;
