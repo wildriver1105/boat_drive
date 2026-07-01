@@ -26,6 +26,16 @@ export function isCompactUI(w, h) {
   return w < COMPACT_MAX_W || h < COMPACT_MAX_H;
 }
 
+// Tall-enough narrow screens (a phone held in portrait) use the "console
+// stack" arrangement: a larger helm centred at the bottom, with the thrusters
+// sitting directly ABOVE the throttle on the right (both worked by the right
+// thumb). The 720px height floor guarantees that column clears the top-right
+// button stack; shorter narrow screens fall back to the spread layout so
+// nothing collides.
+function usePortraitStack(w, h) {
+  return w < COMPACT_MAX_W && h >= 720;
+}
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -94,8 +104,30 @@ const THRUSTER_GAP = 12; // gap between thruster panel and throttle panel
 // LEFT of the throttle handle. Compact: centred along the bottom edge, in the
 // gap between the bottom-left helm and the bottom-right throttle.
 export function thrusterLayout(canvasCssW, canvasCssH) {
-  const compact = isCompactUI(canvasCssW, canvasCssH);
-  if (compact) {
+  // Portrait phones: thrusters stacked directly ABOVE the throttle, sharing
+  // its width and left edge so the two form one right-hand console.
+  if (usePortraitStack(canvasCssW, canvasCssH)) {
+    const t = throttleLayout(canvasCssW, canvasCssH);
+    const panelW = t.panelW;
+    const panelH = 128;
+    const gap = 10;
+    const px = t.px;
+    const py = t.py - panelH - gap;
+    const rockerW = panelW - 16;
+    const rockerH = 32;
+    return {
+      px,
+      py,
+      panelW,
+      panelH,
+      bow: { x: px + 8, y: py + 30, w: rockerW, h: rockerH },
+      stern: { x: px + 8, y: py + 84, w: rockerW, h: rockerH },
+    };
+  }
+
+  // Shorter / mid-height compact screens: thrusters centred along the bottom,
+  // between the bottom-left helm and the bottom-right throttle.
+  if (isCompactUI(canvasCssW, canvasCssH)) {
     const panelW = 92;
     const panelH = 138;
     const bottomMargin = 28;
@@ -151,12 +183,25 @@ const HELM_HIT_PAD = 16;
 // Desktop: helm anchored BOTTOM-CENTRE. Compact: BOTTOM-LEFT and smaller, so
 // the centre + right stay free for the thrusters and throttle.
 export function helmLayout(canvasCssW, canvasCssH) {
-  const compact = isCompactUI(canvasCssW, canvasCssH);
-  if (compact) {
+  // Portrait phones: a larger helm, centred in the space LEFT of the right-hand
+  // throttle/thruster console (i.e. excluding the console's width) rather than
+  // dead-centre of the screen.
+  if (usePortraitStack(canvasCssW, canvasCssH)) {
+    const radius = 62;
+    const t = throttleLayout(canvasCssW, canvasCssH);
+    return {
+      cx: t.px / 2, // centre of the free area to the left of the console
+      cy: canvasCssH - radius - 62, // room for the HELM label + home indicator
+      radius,
+    };
+  }
+  // Shorter / mid-height compact screens: smaller helm tucked bottom-left so
+  // the centre + right stay clear for the thrusters and throttle.
+  if (isCompactUI(canvasCssW, canvasCssH)) {
     const radius = 50;
     return {
       cx: 14 + radius + 12,
-      cy: canvasCssH - radius - 62, // room for the HELM label + home indicator
+      cy: canvasCssH - radius - 62,
       radius,
     };
   }
