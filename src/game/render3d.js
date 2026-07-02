@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { cleatWorld, anchorWorld } from './mooring.js';
+import { WAKE_MAX_POINTS } from './constants.js';
 
 // Wave field — kept in lock-step with the GLSL waveH() in the water material
 // so boats and buoys bob exactly with the surface they sit on. (x, z) are
@@ -29,8 +30,13 @@ function waveHeight(x, z, t) {
   return h;
 }
 
-// Sun direction (golden-hour low sun) shared by the sky, lights and reflections.
-const SUN_POS = new THREE.Vector3(60, 18, -38);
+// Sun direction shared by the sky, lights and reflections. Mid-morning sun
+// (~30° elevation): bright, high-contrast light with a clear blue sky — a
+// simulation tool needs to SEE docks and buoys, not squint through golden-
+// hour haze — while still low enough that hulls throw readable shadows on
+// the water (a key distance cue when docking).
+const SUN_POS = new THREE.Vector3(75, 48, -38);
+const SUN_DIR = SUN_POS.clone().normalize();
 
 export function createRenderer3D(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -41,20 +47,24 @@ export function createRenderer3D(canvas) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Filmic tone mapping is what gives PBR water its cinematic, non-flat look.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.95;
+  // Real-time shadows — the hull shadow moving on the water is one of the
+  // strongest depth/distance cues when manoeuvring near a dock.
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  // Haze near the horizon hides the finite water plane's edge and ties the
-  // sea into the sky. Colour is a light atmospheric blue (the horizon tint).
-  scene.fog = new THREE.Fog('#9fc1d6', 70, 230);
+  // Light haze only near the horizon: it still hides the water plane's edge
+  // but no longer swallows docks/buoys at working distances.
+  scene.fog = new THREE.Fog('#c9dfee', 160, 720);
 
-  // Atmospheric sky (three's physically-based Sky shader) at a low sun.
+  // Atmospheric sky (three's physically-based Sky shader), clear day.
   const sky = new Sky();
   sky.scale.setScalar(10000);
-  sky.material.uniforms.turbidity.value = 6;
-  sky.material.uniforms.rayleigh.value = 2.2;
-  sky.material.uniforms.mieCoefficient.value = 0.005;
-  sky.material.uniforms.mieDirectionalG.value = 0.85;
+  sky.material.uniforms.turbidity.value = 4;
+  sky.material.uniforms.rayleigh.value = 1.4;
+  sky.material.uniforms.mieCoefficient.value = 0.004;
+  sky.material.uniforms.mieDirectionalG.value = 0.8;
   sky.material.uniforms.sunPosition.value.copy(SUN_POS);
 
   // Build an environment map from the sky so the metallic water (and the
@@ -67,16 +77,34 @@ export function createRenderer3D(canvas) {
   scene.add(sky); // move the sky into the main scene as the backdrop
   pmrem.dispose();
 
-  // Lighting — warm golden sun + cool sky fill + hemisphere ambient.
-  const sun = new THREE.DirectionalLight('#ffd9b0', 1.6);
+  // Lighting — bright near-white sun + cool sky fill + hemisphere ambient.
+  const sun = new THREE.DirectionalLight('#fff1dc', 1.85);
   sun.position.copy(SUN_POS);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 20;
+  sun.shadow.camera.far = 320;
+  sun.shadow.camera.left = -55;
+  sun.shadow.camera.right = 55;
+  sun.shadow.camera.top = 55;
+  sun.shadow.camera.bottom = -55;
+  sun.shadow.camera.updateProjectionMatrix(); // frustum changed after creation
+  sun.shadow.bias = -0.0004;
   scene.add(sun);
-  scene.add(new THREE.AmbientLight('#ffffff', 0.25));
-  scene.add(new THREE.HemisphereLight('#86b0d8', '#0a2438', 0.45));
+  scene.add(sun.target);
+  scene.add(new THREE.AmbientLight('#ffffff', 0.14));
+  scene.add(new THREE.HemisphereLight('#bcd9f0', '#0d3350', 0.45));
 
-  // Water.
+  // Water: displaced detail plane around the boat + a huge flat far plane so
+  // the sea runs all the way to the horizon instead of ending in fog.
   const water = makeWater();
   scene.add(water.mesh);
+  const farWater = new THREE.Mesh(
+    new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: '#0b4166', roughness: 0.42, metalness: 0.5 })
+  );
+  farWater.position.y = -0.5; // below the deepest wave trough — no z-fighting
+  scene.add(farWater);
 
   // Player boat.
   const boat = makeBoat();
@@ -120,6 +148,58 @@ export function createRenderer3D(canvas) {
   const _mMid = new THREE.Vector3();
   const _mA = new THREE.Vector3();
   const _mB = new THREE.Vector3();
+
+  // Wake foam — the SAME particle list the 2D renderer draws (world.wake),
+  // shown as flat white patches riding the wave surface. Stern trail, Kelvin
+  // arms, prop wash and thruster jets all read exactly like the 2D view.
+  const foamGeo = new THREE.PlaneGeometry(1, 1);
+  foamGeo.rotateX(-Math.PI / 2);
+  const foamAlpha = new THREE.InstancedBufferAttribute(new Float32Array(WAKE_MAX_POINTS), 1);
+  foamAlpha.setUsage(THREE.DynamicDrawUsage);
+  foamGeo.setAttribute('aAlpha', foamAlpha);
+  const foamMat = new THREE.MeshBasicMaterial({
+    map: makeFoamTexture(),
+    transparent: true,
+    depthWrite: false,
+  });
+  foamMat.onBeforeCompile = (shader) => {
+    shader.vertexShader =
+      'attribute float aAlpha;\nvarying float vFoamA;\n' +
+      shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n vFoamA = aAlpha;'
+      );
+    shader.fragmentShader =
+      'varying float vFoamA;\n' +
+      shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>\n diffuseColor.a *= vFoamA;'
+      );
+  };
+  const foam = new THREE.InstancedMesh(foamGeo, foamMat, WAKE_MAX_POINTS);
+  foam.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  foam.frustumCulled = false;
+  foam.renderOrder = 1; // over the water, under the boat
+  scene.add(foam);
+  const _fm = new THREE.Matrix4();
+
+  function syncWake(world, time) {
+    const wake = world.wake || [];
+    const n = Math.min(wake.length, WAKE_MAX_POINTS);
+    for (let i = 0; i < n; i++) {
+      const p = wake[i];
+      const age = time - p.born;
+      const k = Math.min(1, Math.max(0, age / p.lifetime));
+      const s = Math.max(0.01, p.size0 + p.grow * age);
+      _fm.makeScale(s, 1, s);
+      _fm.setPosition(p.x, waveHeight(p.x, p.y, time) + 0.05, p.y);
+      foam.setMatrixAt(i, _fm);
+      foamAlpha.setX(i, p.alpha * (1 - k));
+    }
+    foam.count = n;
+    foam.instanceMatrix.needsUpdate = true;
+    foamAlpha.needsUpdate = true;
+  }
 
   function syncMooring(world, time) {
     const lines = world.mooring ? world.mooring.lines : [];
@@ -189,17 +269,20 @@ export function createRenderer3D(canvas) {
 
   // Cameras.
   const aerialCam = new THREE.PerspectiveCamera(52, 1, 0.1, 2000);
-  const cockpitCam = new THREE.PerspectiveCamera(72, 1, 0.05, 2000);
+  const cockpitCam = new THREE.PerspectiveCamera(66, 1, 0.05, 2000);
 
   // The cockpit camera is PARENTED to the boat, so it rolls/pitches with the
   // hull. The bow geometry therefore stays in a fixed place in the frame no
   // matter how the boat turns — instead of the bow swinging up into view, the
-  // horizon tilts (exactly how it looks from a real helm). Eye at the helm.
+  // horizon tilts (exactly how it looks from a real helm). Standing eye
+  // height at the helm: the bow tip stays visible as a reference but no
+  // longer blocks the near water, so the view is actually usable for
+  // judging approaches.
   const cockpitRig = new THREE.Object3D();
-  cockpitRig.position.set(-0.2, 1.62, -0.45);
+  cockpitRig.position.set(-0.2, 2.0, -0.45);
   boat.group.add(cockpitRig);
   cockpitCam.rotation.order = 'YXZ';
-  cockpitCam.rotation.set(-0.05, -Math.PI / 2, 0); // face the bow (+X), slight downward
+  cockpitCam.rotation.set(-0.09, -Math.PI / 2, 0); // face the bow (+X), slight downward
   cockpitRig.add(cockpitCam);
 
   const _fwd = new THREE.Vector3();
@@ -249,7 +332,15 @@ export function createRenderer3D(canvas) {
     syncEntities(world);
     syncTrack(world, world.time);
     syncMooring(world, world.time);
+    syncWake(world, world.time);
     water.update(world.time, b.x, b.y);
+    farWater.position.set(b.x, -0.5, b.y);
+
+    // Keep the sun's shadow frustum centred on the boat so shadows stay
+    // crisp wherever it sails.
+    sun.position.set(b.x + SUN_DIR.x * 140, SUN_DIR.y * 140, b.y + SUN_DIR.z * 140);
+    sun.target.position.set(b.x, 0, b.y);
+    sun.target.updateMatrixWorld();
 
     let cam;
     if (mode === 'cockpit') {
@@ -259,8 +350,8 @@ export function createRenderer3D(canvas) {
       // Chase cam, raised and pulled back, aiming below the boat so the hull
       // rides in the upper-centre of the frame — clear of the control overlay
       // along the bottom edge.
-      const dist = 21;
-      const height = 16;
+      const dist = 23;
+      const height = 17;
       aerialCam.position.set(b.x - _fwd.x * dist, height, b.y - _fwd.z * dist);
       aerialCam.lookAt(b.x + _fwd.x * 2, -11, b.y + _fwd.z * 2);
       aerialCam.updateMatrixWorld(true);
@@ -284,11 +375,16 @@ export function createRenderer3D(canvas) {
     trackLine.material.dispose();
     ghostGeo.dispose();
     ghostMat.dispose();
+    foamGeo.dispose();
+    if (foamMat.map) foamMat.map.dispose();
+    foamMat.dispose();
+    farWater.geometry.dispose();
+    farWater.material.dispose();
     if (envRT) envRT.dispose();
     renderer.dispose();
   }
 
-  return { draw, resize, dispose };
+  return { draw, resize, dispose, _debug: { renderer, scene, sun, water, boat } };
 }
 
 // ---------------- Water ----------------
@@ -307,18 +403,26 @@ function makeWater() {
   const uniforms = {
     uTime: { value: 0 },
     uOffset: { value: new THREE.Vector2(0, 0) },
+    uRippleTex: { value: makeRippleNormalTexture() },
   };
 
+  // Balance matters here: the env-map reflection and metalness make the water
+  // look alive, but neither term is shadowed — only the sun's DIFFUSE lighting
+  // is. Keeping metalness low and env moderate leaves enough shadowable
+  // diffuse for hull/dock shadow pools (a key distance cue when docking)
+  // while the ripple normals + sun specular still give the glinting surface.
   const material = new THREE.MeshStandardMaterial({
-    color: '#0d3a57',
-    roughness: 0.38,
-    metalness: 0.6,
+    color: '#0e4a72',
+    roughness: 0.34,
+    metalness: 0.22,
   });
+  material.envMapIntensity = 0.75;
 
   // GLSL wave field — MUST mirror waveHeight() above. p is WORLD XZ.
   const WAVE_GLSL = `
     uniform float uTime;
     uniform vec2 uOffset;
+    varying vec2 vWorldXZ;
     float waveH(vec2 p, float t) {
       float h = 0.0;
       h += 0.16 * sin(p.x * 0.22 + t * 0.8);
@@ -332,12 +436,14 @@ function makeWater() {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uOffset = uniforms.uOffset;
+    shader.uniforms.uRippleTex = uniforms.uRippleTex;
     shader.vertexShader = WAVE_GLSL + shader.vertexShader;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <beginnormal_vertex>',
         `
         vec2 wp = position.xz + uOffset;
+        vWorldXZ = wp;
         float hC = waveH(wp, uTime);
         float e = 0.6;
         float hX = waveH(wp + vec2(e, 0.0), uTime);
@@ -355,6 +461,29 @@ function makeWater() {
         transformed.y += hC;
         `
       );
+
+    // Fragment: two counter-scrolling copies of a tileable ripple normal map
+    // perturb the (already wave-displaced) surface normal. This is what
+    // produces fine sun glints and live surface texture instead of a smooth
+    // metallic sheet.
+    shader.fragmentShader =
+      `
+      uniform float uTime;
+      uniform sampler2D uRippleTex;
+      varying vec2 vWorldXZ;
+      ` + shader.fragmentShader.replace(
+        '#include <normal_fragment_maps>',
+        `
+        {
+          vec2 ruv = vWorldXZ / 7.0;
+          vec3 rn1 = texture2D(uRippleTex, ruv * 0.9 + vec2(uTime * 0.013, uTime * 0.009)).xyz * 2.0 - 1.0;
+          vec3 rn2 = texture2D(uRippleTex, ruv * 2.3 + vec2(-uTime * 0.018, uTime * 0.014)).xyz * 2.0 - 1.0;
+          vec2 rip = (rn1.xy + rn2.xy * 0.65) * 0.22;
+          normal = normalize(normal + mat3(viewMatrix) * vec3(rip.x, 0.0, rip.y));
+        }
+        #include <normal_fragment_maps>
+        `
+      );
   };
 
   const mesh = new THREE.Mesh(geo, material);
@@ -370,16 +499,92 @@ function makeWater() {
   };
 }
 
+// Tileable ripple normal map, generated procedurally (no external assets):
+// a sum of integer-wavenumber sines is periodic by construction, so the
+// texture wraps seamlessly; normals come from finite differences.
+function makeRippleNormalTexture(size = 256) {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const comps = [];
+  for (let i = 0; i < 12; i++) {
+    comps.push({
+      kx: Math.round(1 + rnd() * 7) * (rnd() > 0.5 ? 1 : -1),
+      ky: Math.round(1 + rnd() * 7) * (rnd() > 0.5 ? 1 : -1),
+      amp: 0.4 + rnd() * 0.6,
+      ph: rnd() * Math.PI * 2,
+    });
+  }
+  const h = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      let s = 0;
+      for (const c of comps) s += c.amp * Math.sin(2 * Math.PI * (c.kx * u + c.ky * v) + c.ph);
+      h[y * size + x] = s;
+    }
+  }
+  const data = new Uint8Array(size * size * 4);
+  const slope = 2.2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const xp = (x + 1) % size;
+      const yp = (y + 1) % size;
+      const dx = (h[y * size + xp] - h[y * size + x]) * slope;
+      const dy = (h[yp * size + x] - h[y * size + x]) * slope;
+      const inv = 1 / Math.hypot(dx, dy, 1);
+      const i4 = (y * size + x) * 4;
+      data[i4] = Math.round((-dx * inv * 0.5 + 0.5) * 255);
+      data[i4 + 1] = Math.round((-dy * inv * 0.5 + 0.5) * 255);
+      data[i4 + 2] = Math.round((inv * 0.5 + 0.5) * 255);
+      data[i4 + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// Soft foam blob sprite for the 3D wake particles.
+function makeFoamTexture(size = 64) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.4)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.12})`;
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * size * 0.4;
+    g.beginPath();
+    g.arc(size / 2 + Math.cos(a) * r, size / 2 + Math.sin(a) * r, 1 + Math.random() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // ---------------- Shared boat-building kit ----------------
 // Reusable PBR materials (shared across all hulls → cheap) and geometry
 // helpers so every boat — player and parked — gets a properly sculpted hull,
 // rubrail, windscreen, rails, seats, etc. instead of a plain box.
 
 const MAT = {
-  white: new THREE.MeshStandardMaterial({ color: '#eef2f7', roughness: 0.32, metalness: 0.12 }),
-  cream: new THREE.MeshStandardMaterial({ color: '#efe9d6', roughness: 0.4, metalness: 0.1 }),
+  // Whites are kept a touch grey + rougher so hulls hold their form in the
+  // bright midday sun instead of blowing out to a shapeless white.
+  white: new THREE.MeshStandardMaterial({ color: '#dde4ec', roughness: 0.48, metalness: 0.08 }),
+  cream: new THREE.MeshStandardMaterial({ color: '#e7e0cc', roughness: 0.5, metalness: 0.08 }),
   navy: new THREE.MeshStandardMaterial({ color: '#1f3f63', roughness: 0.45, metalness: 0.25 }),
-  cabin: new THREE.MeshStandardMaterial({ color: '#f6f8fb', roughness: 0.3, metalness: 0.15 }),
+  cabin: new THREE.MeshStandardMaterial({ color: '#e4eaf1', roughness: 0.45, metalness: 0.1 }),
   teak: new THREE.MeshStandardMaterial({ color: '#b5894f', roughness: 0.75 }),
   cockpit: new THREE.MeshStandardMaterial({ color: '#1a3047', roughness: 0.7 }),
   glass: new THREE.MeshStandardMaterial({ color: '#a9d4e8', roughness: 0.06, metalness: 0.2, transparent: true, opacity: 0.42 }),
@@ -395,12 +600,18 @@ const MAT = {
   sail: new THREE.MeshStandardMaterial({ color: '#f4f6f8', roughness: 0.8, metalness: 0.0, side: THREE.DoubleSide }),
 };
 
-const HULL_PALETTE_3D = ['#eef2f7', '#e9edf2', '#2c5577', '#7c2730', '#23635a', '#efe9d6'];
+// The sky IBL (scene.environment) is applied UN-shadowed to every material at
+// full strength by default — strong enough to wash sun shadows out entirely.
+// Dial it down so the (shadow-casting) directional sun dominates the lighting.
+for (const m of Object.values(MAT)) m.envMapIntensity = 0.4;
+
+const HULL_PALETTE_3D = ['#dde4ec', '#d6dde6', '#2c5577', '#7c2730', '#23635a', '#e7e0cc'];
 const _hullMatCache = new Map();
 function hullMat(color) {
   let m = _hullMatCache.get(color);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.12 });
+    m = new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.08 });
+    m.envMapIntensity = 0.4; // see the MAT note — keep the sun dominant
     _hullMatCache.set(color, m);
   }
   return m;
@@ -559,6 +770,7 @@ function buildCabin(group, L, W, deckY, fly, s = 1) {
   const cabLen = cabFwd - cabAft, cabBeam = W * 0.72;
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabLen, cabH, cabBeam), MAT.cabin);
   cabin.position.set((cabFwd + cabAft) / 2, deckY + cabH / 2, 0);
+  cabin.castShadow = true;
   group.add(cabin);
   // Raked front windscreen.
   const front = new THREE.Mesh(new THREE.BoxGeometry(0.06, cabH * 0.7, cabBeam * 0.92), MAT.glass);
@@ -604,6 +816,7 @@ function buildSailRig(group, L, W, deckY) {
   // Billowed mainsail — an arc of a thin cylinder.
   const sailGeo = new THREE.CylinderGeometry(L * 0.45, L * 0.45, mastH * 0.8, 16, 1, true, Math.PI * 0.15, Math.PI * 0.5);
   const sail = new THREE.Mesh(sailGeo, MAT.sail);
+  sail.castShadow = true;
   sail.scale.set(1, 1, 0.7);
   sail.position.set(mastX - L * 0.18, deckY + mastH * 0.45, -0.05);
   sail.rotation.y = Math.PI * 0.5;
@@ -819,6 +1032,7 @@ function makeEntityMesh(e) {
     const cabinH = 0.7 * sz;
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(L * 0.4, cabinH, off * 1.4), MAT.cabin);
     cabin.position.set(0, deckY + 0.2 + cabinH / 2, 0);
+    cabin.castShadow = true;
     group.add(cabin);
     const cabinGlass = new THREE.Mesh(new THREE.BoxGeometry(0.06, cabinH * 0.5, off * 1.3), MAT.glass);
     cabinGlass.position.set(L * 0.2, deckY + 0.2 + cabinH * 0.55, 0);

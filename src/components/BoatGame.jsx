@@ -46,6 +46,8 @@ export default function BoatGame() {
 
     const world = createWorld();
     worldRef.current = world;
+    // Dev-only debug handle (headless testing / console poking).
+    if (process.env.NODE_ENV !== 'production') window.__boatWorld = world;
 
     const renderer = createRenderer(canvas);
     let renderer3d = null;
@@ -56,6 +58,7 @@ export default function BoatGame() {
       has3dRef.current = false;
       console.warn('3D view unavailable:', err);
     }
+    if (process.env.NODE_ENV !== 'production') window.__boatR3D = renderer3d;
 
     const fitCanvas = () => {
       const isMobile =
