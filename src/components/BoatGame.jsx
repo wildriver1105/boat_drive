@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createWorld, saveWorld, clearTrack } from '@/game/world';
 import { createInput } from '@/game/input';
-import { createRenderer } from '@/game/render';
+import { createRenderer, renderPresetThumb } from '@/game/render';
 import { createRenderer3D } from '@/game/render3d';
 import { createLoop } from '@/game/loop';
 import { ENTITY_PRESETS } from '@/game/entities';
@@ -492,11 +492,82 @@ function ViewToggle({ mode, onMode }) {
   );
 }
 
+const PALETTE_TABS = [
+  { id: 'dock', label: 'Docks', icon: '⚓' },
+  { id: 'boat', label: 'Boats', icon: '⛵' },
+  { id: 'buoy', label: 'Marks', icon: '🟠' },
+  { id: 'terrain', label: 'Terrain', icon: '⛰' },
+];
+
+function paletteItems(tabId) {
+  if (tabId === 'dock') {
+    return ENTITY_PRESETS.filter((p) => p.category === 'dock' || p.category === 'bollard');
+  }
+  return ENTITY_PRESETS.filter((p) => p.category === tabId);
+}
+
+// Game-style asset inventory: category tabs + a scrollable grid of cards,
+// each with a live-rendered preview of the actual map art.
+function AssetPalette({ tool, onTool }) {
+  const [tab, setTab] = useState('dock');
+  const [thumbs, setThumbs] = useState(null);
+
+  // Thumbnails are generated once, client-side, from the real 2D renderers.
+  useEffect(() => {
+    const t = {};
+    for (const p of ENTITY_PRESETS) t[p.id] = renderPresetThumb(p, 96);
+    setThumbs(t);
+  }, []);
+
+  const items = paletteItems(tab);
+  return (
+    <div className="asset-palette" role="listbox" aria-label="Asset inventory">
+      <div className="palette-tabs" role="tablist">
+        {PALETTE_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`palette-tab ${tab === t.id ? 'active' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            <span className="palette-tab-icon" aria-hidden="true">{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="palette-grid">
+        {items.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`asset-card ${tool === p.id ? 'active' : ''}`}
+            onClick={() => onTool(tool === p.id ? 'select' : p.id)}
+            title={
+              p.height
+                ? `${p.label} — ${p.length}m × ${p.width}m, ${p.height}m high`
+                : `${p.label} — ${p.length}m × ${p.width}m`
+            }
+          >
+            <span className="asset-thumb">
+              {thumbs && thumbs[p.id] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={thumbs[p.id]} alt="" draggable="false" />
+              ) : null}
+            </span>
+            <span className="asset-name">{p.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="palette-hint">
+        {tool === 'select' ? 'Pick an asset, then click open water' : 'Click open water to place — click the card again to stop'}
+      </div>
+    </div>
+  );
+}
+
 function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSample, onExit, onClearAll }) {
-  const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock' || p.category === 'bollard');
-  const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
-  const buoys = ENTITY_PRESETS.filter((p) => p.category === 'buoy');
-  const terrain = ENTITY_PRESETS.filter((p) => p.category === 'terrain');
   const sel = !!selected;
   return (
     <>
@@ -511,59 +582,6 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSampl
         >
           <span aria-hidden="true">↖</span> Select
         </button>
-
-        <span className="tool-divider" />
-        <span className="tool-group-label">Docks</span>
-        {docks.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            className={`tool-btn ${tool === d.id ? 'active' : ''}`}
-            onClick={() => onTool(d.id)}
-            title={`${d.label} (${d.length}m × ${d.width}m)`}
-          >
-            {d.label}
-          </button>
-        ))}
-        <span className="tool-divider" />
-        <span className="tool-group-label">Boats</span>
-        {boats.map((b) => (
-          <button
-            key={b.id}
-            type="button"
-            className={`tool-btn ${tool === b.id ? 'active' : ''}`}
-            onClick={() => onTool(b.id)}
-            title={`${b.label} (${b.length}m × ${b.width}m)`}
-          >
-            {b.label}
-          </button>
-        ))}
-        <span className="tool-divider" />
-        <span className="tool-group-label">Marks</span>
-        {buoys.map((b) => (
-          <button
-            key={b.id}
-            type="button"
-            className={`tool-btn ${tool === b.id ? 'active' : ''}`}
-            onClick={() => onTool(b.id)}
-            title={`${b.label} (anchored — never moves)`}
-          >
-            {b.label}
-          </button>
-        ))}
-        <span className="tool-divider" />
-        <span className="tool-group-label">Terrain</span>
-        {terrain.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`tool-btn ${tool === t.id ? 'active' : ''}`}
-            onClick={() => onTool(t.id)}
-            title={`${t.label} (${t.length}m × ${t.width}m, ${t.height}m high)`}
-          >
-            {t.label}
-          </button>
-        ))}
         <span className="tool-spacer" />
         <button type="button" className="tool-btn" onClick={onLoadSample} title="Load the bundled sample training harbor (replaces the map)">
           ⚓ Sample harbor
@@ -576,6 +594,8 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSampl
         </button>
       </div>
     </div>
+
+    <AssetPalette tool={tool} onTool={onTool} />
 
     {/* Selection actions — appear under the header only when an item is
         selected, so the header stays clean otherwise. */}

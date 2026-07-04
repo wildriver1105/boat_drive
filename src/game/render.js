@@ -2078,10 +2078,10 @@ function drawEditOverlay(ctx, w, h, world) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Edit-mode hints (bottom-left).
+  // Edit-mode hints — bottom-RIGHT (the asset palette owns the left edge).
   ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.fillStyle = 'rgba(230, 244, 251, 0.72)';
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'right';
   const lines = [
     'EDIT MODE — boat physics paused',
     'W A S D / ←↑→↓   Pan camera',
@@ -2092,7 +2092,7 @@ function drawEditOverlay(ctx, w, h, world) {
     'Delete            Remove selected',
     'Esc               Deselect',
   ];
-  const x = 16;
+  const x = w - 16;
   const yTop = h - 16 - (lines.length - 1) * 18 - 6;
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], x, yTop + i * 18);
@@ -3231,6 +3231,67 @@ function drawHints(ctx, w, h) {
   });
   ctx.restore();
   void w; void h;
+}
+
+// ---------- Asset-palette thumbnails ----------
+
+// Render a preset's REAL 2D art onto a small offscreen canvas and return a
+// data URL — the editor palette shows exactly what will be placed, with no
+// separate image assets to maintain. Client-side only (needs `document`).
+export function renderPresetThumb(p, size = 96) {
+  const canvas = document.createElement('canvas');
+  const dpr = 2; // crisp on retina
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Sea backdrop with a soft glare so cards read as "water tiles".
+  const bg = ctx.createLinearGradient(0, 0, 0, size);
+  bg.addColorStop(0, '#175073');
+  bg.addColorStop(1, '#0a2e47');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, size, size);
+  const gl = ctx.createRadialGradient(size * 0.32, size * 0.26, 2, size * 0.32, size * 0.26, size * 0.85);
+  gl.addColorStop(0, 'rgba(180, 220, 240, 0.12)');
+  gl.addColorStop(1, 'rgba(180, 220, 240, 0)');
+  ctx.fillStyle = gl;
+  ctx.fillRect(0, 0, size, size);
+
+  const ghost = {
+    id: 'thumb_' + p.id,
+    presetId: p.id,
+    category: p.category,
+    x: 0, y: 0, heading: 0,
+    length: p.length,
+    width: p.width,
+    hull: p.hull,
+    sail: p.sail,
+    cabin: p.cabin,
+    beacon: p.beacon,
+    mark: p.mark,
+    terrain: p.terrain,
+    height: p.height,
+  };
+  // Fit the footprint into the tile; small round things (buoys, bollards)
+  // get a tighter target so they don't balloon into abstract blobs.
+  const maxDim = Math.max(p.length, p.width) * PX_PER_M;
+  const small = Math.max(p.length, p.width) < 3;
+  const s = (size * (small ? 0.55 : 0.8)) / maxDim;
+  ctx.translate(size / 2, size / 2);
+  ctx.scale(s, s);
+
+  const L = p.length * PX_PER_M;
+  const W = p.width * PX_PER_M;
+  if (p.category === 'dock') drawDockEntity(ctx, ghost);
+  else if (p.category === 'bollard') drawBollardEntity(ctx, ghost);
+  else if (p.category === 'terrain') drawTerrainEntity(ctx, ghost, 1.0);
+  else if (p.category === 'buoy') drawBuoyEntity(ctx, ghost, 1.0);
+  else if (p.hull === 'cat') drawCatamaranTop(ctx, L, W, pickAccent(ghost));
+  else if (p.sail) drawSailboatTop(ctx, L, W, p.sail === true ? 'sloop' : p.sail, pickAccent(ghost));
+  else drawMotorboatTop(ctx, L, W, ghost, pickAccent(ghost));
+
+  return canvas.toDataURL();
 }
 
 // ---------- Geometry helpers ----------
