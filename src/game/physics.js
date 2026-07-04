@@ -5,6 +5,7 @@ import {
   THRUST_REVERSE_SCALE,
   DRAG_FWD_LIN,
   DRAG_FWD_QUAD,
+  DRAG_MASS_EXP,
   HULL_DRAG_ARM,
   DRAG_LAT_LIN_PER_POINT,
   DRAG_LAT_QUAD_PER_POINT,
@@ -242,9 +243,13 @@ export function stepBoat(boat, keys, wind, dt) {
   const thrustScale = engaged >= 0 ? 1 : THRUST_REVERSE_SCALE;
   const F_thrust = engaged * THRUST_MAX * thrustScale;
 
-  // Forward drag at CG.
+  // Forward drag at CG. Heavier displacement drags more water with it —
+  // scaling super-linearly with the mass setting (see DRAG_MASS_EXP) — which
+  // is what caps a heavy hull's top speed on the same engine. Below 1.0 the
+  // scale clamps at 1 so a light boat gains agility, not extra top end.
+  const msDrag = Math.pow(Math.max(1, boat.massScale || 1), DRAG_MASS_EXP);
   const F_drag_fwd =
-    -DRAG_FWD_LIN * vFwd - DRAG_FWD_QUAD * vFwd * Math.abs(vFwd);
+    (-DRAG_FWD_LIN * vFwd - DRAG_FWD_QUAD * vFwd * Math.abs(vFwd)) * msDrag;
 
   // Rudder lift force, applied at the stern (x = -RUDDER_ARM), perpendicular
   // to the hull. Magnitude ∝ vFwd² with sign from vFwd·|vFwd| so reversing
@@ -307,7 +312,8 @@ export function stepBoat(boat, keys, wind, dt) {
 
   // Body → world acceleration. Effective mass/inertia scale with the user's
   // mass setting, so a heavier boat is less sensitive to every force
-  // (including prop walk and thrusters) while keeping the same top speed.
+  // (including prop walk and thrusters); together with the displacement drag
+  // above it also tops out slower on the same engine.
   const ms = boat.massScale > 0 ? boat.massScale : 1;
   const mass = MASS * ms;
   const izz = I_Z * ms;

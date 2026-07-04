@@ -13,6 +13,12 @@ export const MASS = 1500;
 export const I_Z = 2200;
 export const BOAT_LENGTH = 6;
 export const BOAT_WIDTH = 2.2;
+// Heavier displacement → deeper hull → more wetted surface and wave-making
+// resistance. Forward drag scales with max(1, massScale)^DRAG_MASS_EXP, so a
+// heavy boat on the SAME engine both accelerates slowly AND tops out low
+// (massScale 8 ≈ a sailboat on auxiliary power: ~7–8 kn flat out), while
+// lightening below 1.0 sharpens response without raising the top speed.
+export const DRAG_MASS_EXP = 1.3;
 
 // === Engine ===
 export const THRUST_MAX = 9000;

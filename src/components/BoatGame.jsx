@@ -657,7 +657,13 @@ function SettingsModal({
   onClose,
 }) {
   const massLabel =
-    massScale < 0.85 ? 'light · twitchy' : massScale > 1.25 ? 'heavy · sluggish' : 'standard';
+    massScale < 0.85
+      ? 'light · twitchy'
+      : massScale <= 1.6
+        ? 'standard'
+        : massScale <= 4
+          ? 'heavy · slow to spool'
+          : 'displacement · auxiliary power';
   return (
     <div
       className="modal-backdrop"
@@ -755,8 +761,8 @@ function SettingsModal({
                 id="mass-scale"
                 type="range"
                 min="0.5"
-                max="2"
-                step="0.05"
+                max="8"
+                step="0.1"
                 value={massScale}
                 onChange={(e) => onMassScale(Number(e.target.value))}
               />
@@ -764,6 +770,7 @@ function SettingsModal({
                 <span>light</span>
                 <span>standard</span>
                 <span>heavy</span>
+                <span>displacement</span>
               </div>
             </div>
           </section>
