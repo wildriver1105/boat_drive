@@ -27,14 +27,38 @@ export const ENTITY_PRESETS = [
   { id: 'sail-dinghy', label: 'Sail dinghy', category: 'boat', length: 4,  width: 1.5, hull: 'mono', sail: 'dinghy' },
   // Multihull
   { id: 'catamaran',   label: 'Catamaran',   category: 'boat', length: 10, width: 5.5, hull: 'cat' },
-  // Buoys & marks — anchored to the seabed: immovable colliders.
-  { id: 'buoy-red',        label: 'Red buoy',     category: 'buoy', length: 1.0, width: 1.0 },
-  { id: 'buoy-green',      label: 'Green buoy',   category: 'buoy', length: 1.0, width: 1.0 },
-  { id: 'buoy-yellow',     label: 'Race mark',    category: 'buoy', length: 1.2, width: 1.2 },
-  { id: 'buoy-mooring',    label: 'Mooring ball', category: 'buoy', length: 0.8, width: 0.8 },
-  { id: 'buoy-lighthouse', label: 'Lighthouse',   category: 'buoy', length: 2.4, width: 2.4, beacon: true },
+  // Buoys & marks — anchored to the seabed: immovable colliders. The `mark`
+  // field selects the IALA chart-symbol treatment in both renderers. Lateral
+  // colours follow IALA Region B (Korea/Japan/Americas): entering from
+  // seaward, RED to starboard, GREEN to port.
+  { id: 'buoy-red',        label: 'Red nun (stbd)',  category: 'buoy', length: 1.0, width: 1.0, mark: 'lat-s' },
+  { id: 'buoy-green',      label: 'Green can (port)', category: 'buoy', length: 1.0, width: 1.0, mark: 'lat-p' },
+  { id: 'buoy-pref-stbd',  label: 'Pref chan (RGR)', category: 'buoy', length: 1.0, width: 1.0, mark: 'pref-s' },
+  { id: 'buoy-pref-port',  label: 'Pref chan (GRG)', category: 'buoy', length: 1.0, width: 1.0, mark: 'pref-p' },
+  { id: 'buoy-card-n',     label: 'Cardinal N',      category: 'buoy', length: 1.2, width: 1.2, mark: 'card-n' },
+  { id: 'buoy-card-e',     label: 'Cardinal E',      category: 'buoy', length: 1.2, width: 1.2, mark: 'card-e' },
+  { id: 'buoy-card-s',     label: 'Cardinal S',      category: 'buoy', length: 1.2, width: 1.2, mark: 'card-s' },
+  { id: 'buoy-card-w',     label: 'Cardinal W',      category: 'buoy', length: 1.2, width: 1.2, mark: 'card-w' },
+  { id: 'buoy-danger',     label: 'Isolated danger', category: 'buoy', length: 1.2, width: 1.2, mark: 'danger' },
+  { id: 'buoy-safewater',  label: 'Safe water',      category: 'buoy', length: 1.2, width: 1.2, mark: 'safe' },
+  { id: 'buoy-special',    label: 'Special (×)',     category: 'buoy', length: 1.0, width: 1.0, mark: 'special' },
+  { id: 'buoy-wreck',      label: 'Wreck (new)',     category: 'buoy', length: 1.2, width: 1.2, mark: 'wreck' },
+  { id: 'buoy-yellow',     label: 'Race mark',       category: 'buoy', length: 1.2, width: 1.2 },
+  { id: 'buoy-mooring',    label: 'Mooring ball',    category: 'buoy', length: 0.8, width: 0.8 },
+  { id: 'buoy-lighthouse', label: 'Lighthouse',      category: 'buoy', length: 2.4, width: 2.4, beacon: true },
   // Bollard — a round mooring post you can only make lines fast to.
   { id: 'bollard',         label: 'Bollard',      category: 'bollard', length: 0.6, width: 0.6 },
+  // Terrain — land masses and harbour works. All static colliders; `height`
+  // is metres above the waterline and drives the 3D silhouette (a breakwater
+  // you can't see over, a quay you look UP at from the helm, hills that give
+  // the coast its skyline).
+  { id: 'bw-long',    label: 'Breakwater 40m', category: 'terrain', terrain: 'breakwater', length: 40, width: 7,  height: 3.6 },
+  { id: 'bw-short',   label: 'Breakwater 20m', category: 'terrain', terrain: 'breakwater', length: 20, width: 7,  height: 3.6 },
+  { id: 'quay-wall',  label: 'Quay 30m',       category: 'terrain', terrain: 'quay',       length: 30, width: 10, height: 2.4 },
+  { id: 'rock-small', label: 'Rock',           category: 'terrain', terrain: 'rock',       length: 3,  width: 3,  height: 1.6 },
+  { id: 'rock-large', label: 'Reef rocks',     category: 'terrain', terrain: 'rock',       length: 8,  width: 6,  height: 2.6 },
+  { id: 'island-hill',label: 'Island 60m',     category: 'terrain', terrain: 'island',     length: 60, width: 42, height: 17 },
+  { id: 'headland',   label: 'Headland 90m',   category: 'terrain', terrain: 'island',     length: 90, width: 55, height: 24 },
 ];
 
 export function presetById(presetId) {
@@ -61,6 +85,9 @@ export function createEntity(presetId, x, y, heading = 0) {
     sail: p.sail,
     cabin: p.cabin,
     beacon: p.beacon,
+    mark: p.mark,
+    terrain: p.terrain,
+    height: p.height,
   };
 }
 

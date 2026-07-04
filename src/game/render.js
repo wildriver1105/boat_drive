@@ -563,6 +563,7 @@ function drawEntities(ctx, w, h, world) {
 
     if (e.category === 'dock') drawDockEntity(ctx, e);
     else if (e.category === 'bollard') drawBollardEntity(ctx, e);
+    else if (e.category === 'terrain') drawTerrainEntity(ctx, e, world.time);
     else if (e.category === 'buoy') drawBuoyEntity(ctx, e, world.time);
     else if (e.category === 'boat') drawStaticBoatEntity(ctx, e);
 
@@ -740,6 +741,13 @@ function drawBuoyEntity(ctx, e, time) {
     return;
   }
 
+  // IALA chart marks get their own top-down treatment (colour pattern +
+  // topmark glyph, mirroring the chart symbol).
+  if (e.mark) {
+    drawChartMark(ctx, e, time, r);
+    return;
+  }
+
   const color = BUOY_COLORS[e.presetId] || BUOY_COLORS['buoy-yellow'];
 
   // Bobbing ripple — an expanding, fading ring with a per-buoy phase, so a
@@ -789,6 +797,376 @@ function drawBuoyEntity(ctx, e, time) {
   ctx.arc(0, 0, r * 0.12, 0, Math.PI * 2);
   ctx.fillStyle = '#222a33';
   ctx.fill();
+}
+
+// ---------- IALA chart marks (top-down symbol treatment) ----------
+
+const MARK_COLORS = {
+  yellow: '#e8c33a',
+  black: '#151b22',
+  red: '#d63030',
+  green: '#1f9e54',
+  white: '#f4f6f8',
+  blue: '#2b6fd6',
+};
+
+function drawChartMark(ctx, e, time, r) {
+  const C = MARK_COLORS;
+
+  // Bobbing ripple (same treatment as plain buoys).
+  const phase = entityHash01(e, 13);
+  const u = (((time / 2.6 + phase) % 1) + 1) % 1;
+  const ringA = 0.28 * (1 - u);
+  if (ringA > 0.01) {
+    ctx.beginPath();
+    ctx.arc(0, 0, r * (1.2 + u * 1.3), 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(234, 246, 251, ${ringA.toFixed(3)})`;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+  // Water shadow.
+  ctx.beginPath();
+  ctx.arc(1.5, 2.5, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.fill();
+
+  const disc = (color) => {
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+  const clipDisc = (fn) => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.clip();
+    fn();
+    ctx.restore();
+  };
+  const band = (color, frac = 0.36) => clipDisc(() => {
+    ctx.fillStyle = color;
+    ctx.fillRect(-r, -r * frac, r * 2, r * frac * 2);
+  });
+  const halves = (upper, lower) => clipDisc(() => {
+    ctx.fillStyle = upper;
+    ctx.fillRect(-r, -r, r * 2, r);
+    ctx.fillStyle = lower;
+    ctx.fillRect(-r, 0, r * 2, r);
+  });
+  const sectors = (a, b) => clipDisc(() => {
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, r, (i * Math.PI) / 2 - Math.PI / 4, ((i + 1) * Math.PI) / 2 - Math.PI / 4);
+      ctx.closePath();
+      ctx.fillStyle = i % 2 ? a : b;
+      ctx.fill();
+    }
+  });
+  // Tiny topmark cones — `dir` +1 points up (screen −y), −1 down.
+  const cone = (cy, dir, color = C.white) => {
+    const s = r * 0.34;
+    ctx.beginPath();
+    ctx.moveTo(0, cy - dir * s);
+    ctx.lineTo(-s * 0.8, cy + dir * s * 0.55);
+    ctx.lineTo(s * 0.8, cy + dir * s * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+
+  switch (e.mark) {
+    case 'lat-s': // Region B starboard: red nun
+      disc(C.red);
+      cone(0, 1);
+      break;
+    case 'lat-p': // Region B port: green can
+      disc(C.green);
+      clipDisc(() => {
+        ctx.fillStyle = C.white;
+        ctx.fillRect(-r * 0.3, -r * 0.3, r * 0.6, r * 0.6);
+      });
+      break;
+    case 'pref-s': // preferred channel to stbd… red with green band, nun
+      disc(C.red);
+      band(C.green, 0.3);
+      cone(0, 1);
+      break;
+    case 'pref-p': // green with red band, can
+      disc(C.green);
+      band(C.red, 0.3);
+      clipDisc(() => {
+        ctx.fillStyle = C.white;
+        ctx.fillRect(-r * 0.28, -r * 0.28, r * 0.56, r * 0.56);
+      });
+      break;
+    case 'card-n': // black over yellow, cones both up
+      halves(C.black, C.yellow);
+      cone(-r * 0.32, 1);
+      cone(r * 0.38, 1);
+      break;
+    case 'card-s': // yellow over black, cones both down
+      halves(C.yellow, C.black);
+      cone(-r * 0.38, -1);
+      cone(r * 0.32, -1);
+      break;
+    case 'card-e': // black with yellow band, cones base-to-base (◆)
+      disc(C.black);
+      band(C.yellow, 0.3);
+      cone(-r * 0.34, 1);
+      cone(r * 0.34, -1);
+      break;
+    case 'card-w': // yellow with black band, cones point-to-point (⧖)
+      disc(C.yellow);
+      band(C.black, 0.3);
+      cone(-r * 0.34, -1, C.white);
+      cone(r * 0.34, 1, C.white);
+      break;
+    case 'danger': // black, red band, 2 sphere topmark
+      disc(C.black);
+      band(C.red, 0.26);
+      for (const dy of [-r * 0.34, r * 0.34]) {
+        ctx.beginPath();
+        ctx.arc(0, dy, r * 0.18, 0, Math.PI * 2);
+        ctx.fillStyle = C.white;
+        ctx.fill();
+      }
+      break;
+    case 'safe': // red/white vertical stripes → alternating sectors, red ball
+      sectors(C.red, C.white);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.24, 0, Math.PI * 2);
+      ctx.fillStyle = C.red;
+      ctx.fill();
+      break;
+    case 'special': { // yellow with × topmark
+      disc(C.yellow);
+      const s = r * 0.42;
+      ctx.strokeStyle = C.black;
+      ctx.lineWidth = Math.max(1.4, r * 0.16);
+      ctx.beginPath();
+      ctx.moveTo(-s, -s); ctx.lineTo(s, s);
+      ctx.moveTo(-s, s); ctx.lineTo(s, -s);
+      ctx.stroke();
+      break;
+    }
+    case 'wreck': { // emergency wreck: blue/yellow, yellow + cross
+      sectors(C.blue, C.yellow);
+      const s = r * 0.44;
+      ctx.strokeStyle = C.yellow;
+      ctx.lineWidth = Math.max(1.4, r * 0.16);
+      ctx.beginPath();
+      ctx.moveTo(0, -s); ctx.lineTo(0, s);
+      ctx.moveTo(-s, 0); ctx.lineTo(s, 0);
+      ctx.stroke();
+      break;
+    }
+    default:
+      disc(C.yellow);
+  }
+
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(10, 14, 20, 0.75)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+}
+
+// ---------- Terrain (breakwaters, quays, rocks, islands) ----------
+
+// Deterministic irregular coastline path: an ellipse modulated by two low-
+// frequency harmonics seeded from the entity id, so every rock / island gets
+// its own stable shape.
+function terrainPath(ctx, e, scale = 1) {
+  const rx = (e.length * PX_PER_M * scale) / 2;
+  const ry = (e.width * PX_PER_M * scale) / 2;
+  const p1 = entityHash01(e, 7) * Math.PI * 2;
+  const p2 = entityHash01(e, 31) * Math.PI * 2;
+  const a1 = 0.1 + entityHash01(e, 51) * 0.08;
+  const a2 = 0.06 + entityHash01(e, 77) * 0.06;
+  ctx.beginPath();
+  const N = 26;
+  for (let i = 0; i <= N; i++) {
+    const th = (i / N) * Math.PI * 2;
+    const m = 1 + a1 * Math.sin(3 * th + p1) + a2 * Math.sin(5 * th + p2);
+    const x = Math.cos(th) * rx * m;
+    const y = Math.sin(th) * ry * m;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function drawTerrainEntity(ctx, e, time) {
+  const L = e.length * PX_PER_M;
+  const W = e.width * PX_PER_M;
+
+  if (e.terrain === 'breakwater') {
+    // Rubble-mound breakwater: dark armour stone slopes + concrete crest.
+    ctx.save();
+    ctx.translate(3, 5);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    roundedRect(ctx, -L / 2, -W / 2, L, W, W * 0.3);
+    ctx.fill();
+    ctx.restore();
+    const g = ctx.createLinearGradient(0, -W / 2, 0, W / 2);
+    g.addColorStop(0, '#5a5f66');
+    g.addColorStop(0.5, '#484d54');
+    g.addColorStop(1, '#33373d');
+    ctx.fillStyle = g;
+    roundedRect(ctx, -L / 2, -W / 2, L, W, W * 0.3);
+    ctx.fill();
+    ctx.strokeStyle = '#1c2025';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // Armour-stone speckle (deterministic).
+    ctx.save();
+    roundedRect(ctx, -L / 2, -W / 2, L, W, W * 0.3);
+    ctx.clip();
+    const n = Math.max(14, Math.floor(e.length * 1.5));
+    for (let k = 0; k < n; k++) {
+      const hx = entityHash01(e, k * 3 + 1);
+      const hy = entityHash01(e, k * 3 + 2);
+      const hs = entityHash01(e, k * 3 + 3);
+      ctx.fillStyle = hs > 0.5 ? 'rgba(130,138,146,0.5)' : 'rgba(20,24,28,0.4)';
+      ctx.beginPath();
+      ctx.arc((hx - 0.5) * L, (hy - 0.5) * W, 1.5 + hs * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    // Concrete crest walkway.
+    ctx.fillStyle = '#8d939b';
+    roundedRect(ctx, -L / 2 + 3, -W * 0.16, L - 6, W * 0.32, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,24,28,0.5)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    return;
+  }
+
+  if (e.terrain === 'quay') {
+    // Concrete quay wall — pale slab, coping lines, bollards along the edges.
+    ctx.save();
+    ctx.translate(3, 5);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(-L / 2, -W / 2, L, W);
+    ctx.restore();
+    const g = ctx.createLinearGradient(0, -W / 2, 0, W / 2);
+    g.addColorStop(0, '#9aa0a8');
+    g.addColorStop(1, '#7c828a');
+    ctx.fillStyle = g;
+    ctx.fillRect(-L / 2, -W / 2, L, W);
+    ctx.strokeStyle = '#2a2e33';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(-L / 2, -W / 2, L, W);
+    // Expansion joints.
+    ctx.strokeStyle = 'rgba(40,44,50,0.35)';
+    ctx.lineWidth = 0.7;
+    const seam = PX_PER_M * 5;
+    for (let px = -L / 2 + seam; px < L / 2 - 1; px += seam) {
+      ctx.beginPath();
+      ctx.moveTo(px, -W / 2);
+      ctx.lineTo(px, W / 2);
+      ctx.stroke();
+    }
+    // Coping edge stripes + bollards (mirrors mooringPoints spacing).
+    for (const s of [-1, 1]) {
+      ctx.strokeStyle = 'rgba(240,244,248,0.5)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-L / 2 + 2, s * (W / 2 - 2.4));
+      ctx.lineTo(L / 2 - 2, s * (W / 2 - 2.4));
+      ctx.stroke();
+    }
+    const nb = Math.max(2, Math.round(e.length / 8));
+    for (let i = 0; i < nb; i++) {
+      const px = -L * 0.42 + (L * 0.84 * i) / (nb - 1);
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(px, s * W * 0.44, Math.max(2.2, PX_PER_M * 0.22), 0, Math.PI * 2);
+        ctx.fillStyle = '#22262b';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(230,190,60,0.8)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+    }
+    return;
+  }
+
+  if (e.terrain === 'rock') {
+    // Awash rock cluster with a breathing surf fringe.
+    const surf = 0.5 + 0.5 * Math.sin(time * 1.3 + entityHash01(e, 5) * Math.PI * 2);
+    ctx.save();
+    terrainPath(ctx, e, 1.18);
+    ctx.fillStyle = `rgba(240, 248, 252, ${(0.16 + surf * 0.2).toFixed(3)})`;
+    ctx.fill();
+    ctx.restore();
+    terrainPath(ctx, e, 1);
+    const g = ctx.createRadialGradient(-L * 0.15, -W * 0.15, 1, 0, 0, Math.max(L, W) * 0.6);
+    g.addColorStop(0, '#7a7266');
+    g.addColorStop(0.6, '#57503f');
+    g.addColorStop(1, '#332f26');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#15130e';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Crevices.
+    ctx.strokeStyle = 'rgba(15,13,10,0.5)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.2, -W * 0.1);
+    ctx.lineTo(L * 0.15, W * 0.18);
+    ctx.moveTo(L * 0.05, -W * 0.22);
+    ctx.lineTo(-L * 0.05, W * 0.1);
+    ctx.stroke();
+    return;
+  }
+
+  // Island / headland — sandy fringe, grassy slopes, chart-like contour rings.
+  ctx.save();
+  ctx.translate(4, 6);
+  terrainPath(ctx, e, 1.02);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fill();
+  ctx.restore();
+  terrainPath(ctx, e, 1.06);
+  ctx.fillStyle = '#d9c78f';
+  ctx.fill();
+  terrainPath(ctx, e, 1);
+  const gl = ctx.createRadialGradient(-L * 0.1, -W * 0.1, 2, 0, 0, Math.max(L, W) * 0.62);
+  gl.addColorStop(0, '#7ba25c');
+  gl.addColorStop(0.7, '#5e8a4a');
+  gl.addColorStop(1, '#48703a');
+  ctx.fillStyle = gl;
+  ctx.fill();
+  ctx.strokeStyle = '#2c421f';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Contour rings rising toward an off-centre peak.
+  const pkx = (entityHash01(e, 91) - 0.5) * L * 0.22;
+  const pky = (entityHash01(e, 92) - 0.5) * W * 0.22;
+  for (const s of [0.72, 0.48, 0.27]) {
+    ctx.save();
+    ctx.translate(pkx * (1 - s), pky * (1 - s));
+    terrainPath(ctx, e, s);
+    ctx.strokeStyle = 'rgba(34, 52, 24, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(52, 78, 38, 0.28)';
+    ctx.fill();
+    ctx.restore();
+  }
+  // Shore rocks.
+  for (let k = 0; k < 5; k++) {
+    const th = entityHash01(e, 60 + k) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(Math.cos(th) * L * 0.46, Math.sin(th) * W * 0.46, 1.6 + entityHash01(e, 70 + k) * 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#57503f';
+    ctx.fill();
+  }
 }
 
 function drawStaticBoatEntity(ctx, e) {
@@ -1633,6 +2011,9 @@ function drawPlacementGhost(ctx, w, h, world) {
     sail: p.sail,
     cabin: p.cabin,
     beacon: p.beacon,
+    mark: p.mark,
+    terrain: p.terrain,
+    height: p.height,
   };
   // Show exactly where a dock will land after magnetic snapping.
   let snapped = false;
@@ -1659,6 +2040,8 @@ function drawPlacementGhost(ctx, w, h, world) {
     drawDockEntity(ctx, ghost);
   } else if (p.category === 'bollard') {
     drawBollardEntity(ctx, ghost);
+  } else if (p.category === 'terrain') {
+    drawTerrainEntity(ctx, ghost, 0);
   } else if (p.category === 'buoy') {
     drawBuoyEntity(ctx, ghost, 0);
   } else if (p.hull === 'cat') {

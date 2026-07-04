@@ -37,24 +37,35 @@ export function cleatWorld(boat, c) {
   return { x: boat.x + rx, y: boat.y + ry, rx, ry };
 }
 
-// All anchor points lines can attach to: dock corner cleats + bollards.
+// All anchor points lines can attach to: dock corner cleats, bollards, and
+// the bollard row along a quay wall's edges.
 export function mooringPoints(world) {
   const pts = [];
+  const pushLocal = (e, lx, ly) => {
+    const cs = Math.cos(e.heading);
+    const sn = Math.sin(e.heading);
+    pts.push({ entityId: e.id, lx, ly, wx: e.x + lx * cs - ly * sn, wy: e.y + lx * sn + ly * cs });
+  };
   for (const e of world.entities) {
     if (e.category === 'dock') {
-      const cs = Math.cos(e.heading);
-      const sn = Math.sin(e.heading);
       const corners = [
         [e.length * 0.4, e.width * 0.42],
         [e.length * 0.4, -e.width * 0.42],
         [-e.length * 0.4, e.width * 0.42],
         [-e.length * 0.4, -e.width * 0.42],
       ];
-      for (const [lx, ly] of corners) {
-        pts.push({ entityId: e.id, lx, ly, wx: e.x + lx * cs - ly * sn, wy: e.y + lx * sn + ly * cs });
-      }
+      for (const [lx, ly] of corners) pushLocal(e, lx, ly);
     } else if (e.category === 'bollard') {
       pts.push({ entityId: e.id, lx: 0, ly: 0, wx: e.x, wy: e.y });
+    } else if (e.terrain === 'quay') {
+      // Bollards spaced along BOTH long edges of the quay (a wall is usually
+      // approached from one side, but the editor may face it either way).
+      const n = Math.max(2, Math.round(e.length / 8));
+      for (let i = 0; i < n; i++) {
+        const lx = -e.length * 0.42 + (e.length * 0.84 * i) / (n - 1);
+        pushLocal(e, lx, e.width * 0.44);
+        pushLocal(e, lx, -e.width * 0.44);
+      }
     }
   }
   return pts;

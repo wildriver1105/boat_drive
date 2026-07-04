@@ -902,6 +902,9 @@ const BUOY_COLORS3D = {
 function makeEntityMesh(e) {
   const group = new THREE.Group();
 
+  if (e.category === 'terrain') return makeTerrainMesh(e, group);
+  if (e.category === 'buoy' && e.mark) return makeMarkMesh(e, group);
+
   if (e.category === 'dock') {
     const deck = new THREE.Mesh(new THREE.BoxGeometry(e.length, 0.18, e.width), MAT.wood);
     deck.position.y = 0.32;
@@ -951,30 +954,38 @@ function makeEntityMesh(e) {
   }
 
   if (e.category === 'buoy' && e.beacon) {
-    // Lighthouse / channel beacon.
+    // Lighthouse — a REAL tower (~12 m). A breakwater-head light you can pick
+    // up from far outside the entrance and steer by; the height is the point.
     const r = e.length * 0.5;
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.1, 0.5, 16), MAT.pontoon);
-    base.position.y = 0.25;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.05, r * 1.25, 1.0, 16), MAT.pontoon);
+    base.position.y = 0.5;
+    base.castShadow = true;
     group.add(base);
-    for (let i = 0; i < 4; i++) {
+    const SEG_H = 1.9;
+    for (let i = 0; i < 5; i++) {
+      const rTop = r * (0.72 - i * 0.055);
+      const rBot = r * (0.78 - i * 0.055);
       const seg = new THREE.Mesh(
-        new THREE.CylinderGeometry(r * (0.55 - i * 0.06), r * (0.62 - i * 0.06), 0.7, 16),
+        new THREE.CylinderGeometry(rTop, rBot, SEG_H, 16),
         new THREE.MeshStandardMaterial({ color: i % 2 ? '#cf2f2a' : '#f4f6f8', roughness: 0.55 })
       );
-      seg.position.y = 0.6 + i * 0.68;
+      seg.position.y = 1.0 + SEG_H * (i + 0.5);
+      seg.castShadow = true;
       group.add(seg);
     }
-    const gallery = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.5, r * 0.5, 0.18, 14), MAT.dark);
-    gallery.position.y = 0.6 + 4 * 0.68;
+    const topY = 1.0 + SEG_H * 5;
+    const gallery = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.62, r * 0.62, 0.25, 14), MAT.dark);
+    gallery.position.y = topY + 0.12;
     group.add(gallery);
     const lantern = new THREE.Mesh(
-      new THREE.CylinderGeometry(r * 0.36, r * 0.36, 0.5, 12),
-      new THREE.MeshStandardMaterial({ color: '#fff3b0', emissive: '#ffdf6e', emissiveIntensity: 0.9, roughness: 0.3 })
+      new THREE.CylinderGeometry(r * 0.4, r * 0.4, 0.9, 12),
+      new THREE.MeshStandardMaterial({ color: '#fff3b0', emissive: '#ffdf6e', emissiveIntensity: 1.1, roughness: 0.3 })
     );
-    lantern.position.y = 0.6 + 4 * 0.68 + 0.34;
+    lantern.position.y = topY + 0.7;
     group.add(lantern);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, 0.4, 12), MAT.dark);
-    roof.position.y = 0.6 + 4 * 0.68 + 0.75;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 0.5, 0.7, 12), MAT.dark);
+    roof.position.y = topY + 1.5;
+    roof.castShadow = true;
     group.add(roof);
     return { group, baseY: 0, floats: false };
   }
@@ -1074,6 +1085,333 @@ function makeEntityMesh(e) {
   }
   navLights(group, L, W, deckY);
   return { group, baseY: 0, floats: true };
+}
+
+// ---------- IALA chart marks (3D pillar buoys with topmarks) ----------
+
+const MARK3D = {
+  yellow: new THREE.MeshStandardMaterial({ color: '#e8c33a', roughness: 0.5 }),
+  black: new THREE.MeshStandardMaterial({ color: '#15191f', roughness: 0.55 }),
+  red: new THREE.MeshStandardMaterial({ color: '#d63030', roughness: 0.5 }),
+  green: new THREE.MeshStandardMaterial({ color: '#1f9e54', roughness: 0.5 }),
+  white: new THREE.MeshStandardMaterial({ color: '#f4f6f8', roughness: 0.5 }),
+};
+for (const m of Object.values(MARK3D)) m.envMapIntensity = 0.4;
+
+// Vertical-stripe canvas texture (safe water RW / wreck BY marks).
+function stripeTexture(a, b, n = 8) {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 16;
+  const g = c.getContext('2d');
+  const w = c.width / n;
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = i % 2 ? a : b;
+    g.fillRect(i * w, 0, w + 1, c.height);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
+
+// Stack of coloured cylinder bands, bottom-up. Returns the y of the top.
+function bandStack(group, y0, radius, bands) {
+  let y = y0;
+  for (const [mat, h] of bands) {
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.92, radius, h, 12), mat);
+    seg.position.y = y + h / 2;
+    seg.castShadow = true;
+    group.add(seg);
+    y += h;
+  }
+  return y;
+}
+
+// Topmark cone; dir +1 points up, −1 down.
+function topCone(group, y, dir, mat = MARK3D.black) {
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.4, 10), mat);
+  cone.position.y = y;
+  if (dir < 0) cone.rotation.z = Math.PI;
+  group.add(cone);
+}
+
+function makeMarkMesh(e, group) {
+  // Float drum at the waterline — common to every pillar mark.
+  const float = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 0.45, 14), MAT.pontoon);
+  float.position.y = 0.1;
+  group.add(float);
+
+  const m = e.mark;
+  let lightColor = '#ffffff';
+
+  if (m === 'lat-s' || m === 'pref-s') {
+    // Nun: truncated red cone (banded for preferred channel).
+    if (m === 'lat-s') {
+      const nun = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.5, 1.4, 12), MARK3D.red);
+      nun.position.y = 0.32 + 0.7;
+      nun.castShadow = true;
+      group.add(nun);
+    } else {
+      bandStack(group, 0.32, 0.5, [[MARK3D.red, 0.5], [MARK3D.green, 0.4], [MARK3D.red, 0.5]]);
+    }
+    lightColor = '#ff5a46';
+  } else if (m === 'lat-p' || m === 'pref-p') {
+    // Can: green cylinder.
+    if (m === 'lat-p') {
+      const can = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.3, 12), MARK3D.green);
+      can.position.y = 0.32 + 0.65;
+      can.castShadow = true;
+      group.add(can);
+    } else {
+      bandStack(group, 0.32, 0.44, [[MARK3D.green, 0.45], [MARK3D.red, 0.4], [MARK3D.green, 0.45]]);
+    }
+    lightColor = '#4dff88';
+  } else if (m && m.startsWith('card-')) {
+    // Cardinal pillar: yellow/black bands + double-cone topmark on a staff.
+    const dirn = m.slice(5); // n / e / s / w
+    const bands = {
+      n: [[MARK3D.yellow, 0.9], [MARK3D.black, 0.9]],
+      s: [[MARK3D.black, 0.9], [MARK3D.yellow, 0.9]],
+      e: [[MARK3D.black, 0.6], [MARK3D.yellow, 0.6], [MARK3D.black, 0.6]],
+      w: [[MARK3D.yellow, 0.6], [MARK3D.black, 0.6], [MARK3D.yellow, 0.6]],
+    }[dirn];
+    const top = bandStack(group, 0.32, 0.3, bands);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), MAT.chrome);
+    staff.position.y = top + 0.55;
+    group.add(staff);
+    const cones = { n: [1, 1], s: [-1, -1], e: [1, -1], w: [-1, 1] }[dirn];
+    topCone(group, top + 0.95, cones[0]); // upper cone
+    topCone(group, top + 0.45, cones[1]); // lower cone
+  } else if (m === 'danger') {
+    const top = bandStack(group, 0.32, 0.3, [[MARK3D.black, 0.6], [MARK3D.red, 0.5], [MARK3D.black, 0.6]]);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 6), MAT.chrome);
+    staff.position.y = top + 0.45;
+    group.add(staff);
+    for (const dy of [0.35, 0.75]) {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), MARK3D.black);
+      ball.position.y = top + dy;
+      group.add(ball);
+    }
+  } else if (m === 'safe' || m === 'wreck') {
+    const tex = m === 'safe' ? stripeTexture('#d63030', '#f4f6f8') : stripeTexture('#2b6fd6', '#e8c33a');
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5 });
+    mat.envMapIntensity = 0.4;
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 1.5, 14), mat);
+    body.position.y = 0.32 + 0.75;
+    body.castShadow = true;
+    group.add(body);
+    const top = 0.32 + 1.5;
+    if (m === 'safe') {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), MARK3D.red);
+      ball.position.y = top + 0.3;
+      group.add(ball);
+    } else {
+      // Upright yellow "+" cross.
+      for (const rz of [0, Math.PI / 2]) {
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.1, 0.1), MARK3D.yellow);
+        arm.position.y = top + 0.4;
+        arm.rotation.z = rz;
+        group.add(arm);
+      }
+      lightColor = '#ffe45e';
+    }
+  } else if (m === 'special') {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 1.2, 12), MARK3D.yellow);
+    body.position.y = 0.32 + 0.6;
+    body.castShadow = true;
+    group.add(body);
+    // "×" topmark: two crossed arms.
+    for (const rx of [Math.PI / 4, -Math.PI / 4]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.1), MARK3D.yellow);
+      arm.position.y = 0.32 + 1.5;
+      arm.rotation.x = rx;
+      group.add(arm);
+    }
+    lightColor = '#ffe45e';
+  }
+
+  // Small light at the very top of every mark.
+  const bbox = new THREE.Box3().setFromObject(group);
+  const light = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 6),
+    new THREE.MeshStandardMaterial({ color: lightColor, emissive: lightColor, emissiveIntensity: 0.8, roughness: 0.3 })
+  );
+  light.position.y = bbox.max.y + 0.12;
+  group.add(light);
+
+  return { group, baseY: 0, floats: true };
+}
+
+// ---------- Terrain (breakwater / quay / rock / island) ----------
+
+const TERRAIN3D = {
+  concrete: new THREE.MeshStandardMaterial({ color: '#8d939b', roughness: 0.9, metalness: 0.02 }),
+  concreteLight: new THREE.MeshStandardMaterial({ color: '#aab0b8', roughness: 0.85, metalness: 0.02 }),
+  armour: new THREE.MeshStandardMaterial({ color: '#4d5158', roughness: 1.0, metalness: 0.0 }),
+  rock: new THREE.MeshStandardMaterial({ color: '#5c5446', roughness: 1.0, metalness: 0.0 }),
+  sand: new THREE.MeshStandardMaterial({ color: '#d9c78f', roughness: 1.0, metalness: 0.0 }),
+  grass: new THREE.MeshStandardMaterial({ color: '#5e8a4a', roughness: 1.0, metalness: 0.0 }),
+  grassDark: new THREE.MeshStandardMaterial({ color: '#44693a', roughness: 1.0, metalness: 0.0 }),
+};
+for (const m of Object.values(TERRAIN3D)) m.envMapIntensity = 0.35;
+
+// Deterministic per-entity hash in [0,1) (mirrors the 2D renderer's).
+function tHash01(e, salt) {
+  const s = String(e.id || 'x');
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return ((h ^ (salt * 2654435761)) >>> 9) / 8388608 % 1;
+}
+
+function makeTerrainMesh(e, group) {
+  const L = e.length;
+  const W = e.width;
+  const H = e.height || 3;
+
+  if (e.terrain === 'breakwater') {
+    // Rubble mound (trapezoid cross-section extruded along the length) with
+    // a concrete crest and seaward parapet — the classic 방파제 profile.
+    const crestY = H * 0.62;
+    const shape = new THREE.Shape();
+    shape.moveTo(-W / 2, -1.0);
+    shape.lineTo(W / 2, -1.0);
+    shape.lineTo(W * 0.24, crestY);
+    shape.lineTo(-W * 0.24, crestY);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: L, bevelEnabled: false });
+    geo.translate(0, 0, -L / 2);
+    geo.rotateY(Math.PI / 2); // extrusion axis → local +x (the length axis)
+    const mound = new THREE.Mesh(geo, TERRAIN3D.armour);
+    mound.castShadow = true;
+    mound.receiveShadow = true;
+    group.add(mound);
+    // Concrete crest walkway.
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(L, 0.3, W * 0.46), TERRAIN3D.concrete);
+    cap.position.y = crestY + 0.15;
+    cap.receiveShadow = true;
+    group.add(cap);
+    // Parapet wall along the seaward (local −z) edge.
+    const parapet = new THREE.Mesh(new THREE.BoxGeometry(L, H * 0.38, 0.5), TERRAIN3D.concreteLight);
+    parapet.position.set(0, crestY + 0.3 + H * 0.19, -W * 0.16);
+    parapet.castShadow = true;
+    group.add(parapet);
+    // Tetrapod-ish armour blocks scattered along both waterlines.
+    const n = Math.max(4, Math.round(L / 4));
+    const blockGeo = new THREE.IcosahedronGeometry(0.9, 0);
+    for (let i = 0; i < n; i++) {
+      for (const s of [-1, 1]) {
+        const b = new THREE.Mesh(blockGeo, TERRAIN3D.armour);
+        const t = i / (n - 1 || 1);
+        b.position.set(
+          -L / 2 + t * L + (tHash01(e, i * 7 + s) - 0.5) * 2,
+          0.15 + tHash01(e, i * 11 + s) * 0.5,
+          s * (W * 0.42 + (tHash01(e, i * 13 + s) - 0.5) * 0.8)
+        );
+        b.rotation.set(tHash01(e, i * 3 + s) * 3, tHash01(e, i * 5 + s) * 3, 0);
+        const sc = 0.7 + tHash01(e, i * 17 + s) * 0.7;
+        b.scale.set(sc, sc * 0.8, sc);
+        b.castShadow = true;
+        group.add(b);
+      }
+    }
+    return { group, baseY: 0, floats: false };
+  }
+
+  if (e.terrain === 'quay') {
+    // Massive concrete wall: waterline to +H, bollards + fenders.
+    const block = new THREE.Mesh(new THREE.BoxGeometry(L, H + 1.4, W), TERRAIN3D.concrete);
+    block.position.y = (H + 1.4) / 2 - 1.4;
+    block.castShadow = true;
+    block.receiveShadow = true;
+    group.add(block);
+    // Coping stripes along both long edges.
+    for (const s of [-1, 1]) {
+      const coping = new THREE.Mesh(new THREE.BoxGeometry(L, 0.2, 0.6), TERRAIN3D.concreteLight);
+      coping.position.set(0, H + 0.1, s * (W / 2 - 0.3));
+      group.add(coping);
+    }
+    // Deck bollards — matches mooringPoints() spacing exactly.
+    const nb = Math.max(2, Math.round(L / 8));
+    for (let i = 0; i < nb; i++) {
+      const lx = -L * 0.42 + (L * 0.84 * i) / (nb - 1);
+      for (const s of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.4, 10), MAT.dark);
+        post.position.set(lx, H + 0.2, s * W * 0.44);
+        post.castShadow = true;
+        group.add(post);
+      }
+    }
+    // Rubber fenders hanging on both faces.
+    const nf = Math.max(3, Math.round(L / 6));
+    for (let i = 0; i < nf; i++) {
+      const lx = -L * 0.44 + (L * 0.88 * i) / (nf - 1);
+      for (const s of [-1, 1]) {
+        const fender = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.2, 8), MAT.dark);
+        fender.position.set(lx, 0.6, s * (W / 2 + 0.05));
+        group.add(fender);
+      }
+    }
+    return { group, baseY: 0, floats: false };
+  }
+
+  if (e.terrain === 'rock') {
+    // Cluster of rough boulders breaking the surface.
+    const k = 3 + Math.floor(tHash01(e, 1) * 3);
+    for (let i = 0; i < k; i++) {
+      const rockG = new THREE.IcosahedronGeometry(1, 1);
+      const b = new THREE.Mesh(rockG, TERRAIN3D.rock);
+      b.position.set(
+        (tHash01(e, i * 3 + 2) - 0.5) * L * 0.55,
+        -0.3 + tHash01(e, i * 5 + 4) * 0.3,
+        (tHash01(e, i * 7 + 6) - 0.5) * W * 0.55
+      );
+      const sx = L * (0.18 + tHash01(e, i * 11) * 0.14);
+      const sy = (e.height || 1.6) * (0.5 + tHash01(e, i * 13) * 0.5);
+      const sz = W * (0.2 + tHash01(e, i * 17) * 0.16);
+      b.scale.set(sx, sy, sz);
+      b.rotation.y = tHash01(e, i * 19) * Math.PI;
+      b.castShadow = true;
+      group.add(b);
+    }
+    return { group, baseY: 0, floats: false };
+  }
+
+  // Island / headland — sand skirt + grassy slopes + off-centre peak. The
+  // silhouette (up to ~24 m) is what gives coastal cruising its skyline.
+  const rx = L / 2;
+  const rz = W / 2;
+  const skirt = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 18), TERRAIN3D.sand);
+  skirt.scale.set(rx * 1.04, 1, rz * 1.04);
+  skirt.position.y = 0.2;
+  skirt.receiveShadow = true;
+  group.add(skirt);
+  const lower = new THREE.Mesh(new THREE.ConeGeometry(1, H * 0.62, 16), TERRAIN3D.grass);
+  lower.scale.set(rx * 0.92, 1, rz * 0.92);
+  lower.position.y = H * 0.31 + 0.6;
+  lower.castShadow = true;
+  lower.receiveShadow = true;
+  group.add(lower);
+  const peak = new THREE.Mesh(new THREE.ConeGeometry(1, H * 0.55, 14), TERRAIN3D.grassDark);
+  peak.scale.set(rx * 0.5, 1, rz * 0.5);
+  peak.position.set(
+    (tHash01(e, 91) - 0.5) * rx * 0.4,
+    H * 0.62 + H * 0.27,
+    (tHash01(e, 92) - 0.5) * rz * 0.4
+  );
+  peak.castShadow = true;
+  group.add(peak);
+  // Shore boulders.
+  for (let i = 0; i < 6; i++) {
+    const th = tHash01(e, 60 + i) * Math.PI * 2;
+    const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0), TERRAIN3D.rock);
+    const sc = 0.8 + tHash01(e, 70 + i) * 1.6;
+    b.scale.setScalar(sc);
+    b.position.set(Math.cos(th) * rx * 0.95, 0.2, Math.sin(th) * rz * 0.95);
+    b.castShadow = true;
+    group.add(b);
+  }
+  return { group, baseY: 0, floats: false };
 }
 
 function disposeObject(obj) {

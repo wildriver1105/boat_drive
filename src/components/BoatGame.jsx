@@ -7,6 +7,7 @@ import { createRenderer } from '@/game/render';
 import { createRenderer3D } from '@/game/render3d';
 import { createLoop } from '@/game/loop';
 import { ENTITY_PRESETS } from '@/game/entities';
+import { buildSampleHarbor } from '@/game/sample-harbor';
 import { lineState, adjustMooringLength, removeMooringLine } from '@/game/mooring';
 
 const KN_TO_MS = 0.514444;
@@ -251,6 +252,24 @@ export default function BoatGame() {
     }
   }
 
+  // Replace the map with the bundled sample training harbor.
+  function loadSampleHarbor() {
+    const world = worldRef.current;
+    if (!world) return;
+    if (world.entities.length > 0) {
+      // eslint-disable-next-line no-alert
+      if (!window.confirm('Replace the current map with the sample harbor?')) return;
+    }
+    world.entities.length = 0;
+    world.entities.push(...buildSampleHarbor());
+    world.edit.selectedId = null;
+    setSelectedEntity(null);
+    // Park the editor camera over the harbour entrance.
+    world.camera.x = 0;
+    world.camera.y = -20;
+    saveWorld(world);
+  }
+
   // ESC closes the modal.
   useEffect(() => {
     if (!showSettings) return;
@@ -415,6 +434,7 @@ export default function BoatGame() {
           selected={selectedEntity}
           onRotate={rotateSelectedBy}
           onDelete={deleteSelected}
+          onLoadSample={loadSampleHarbor}
           onExit={() => setEditMode(false)}
           onClearAll={() => {
             const world = worldRef.current;
@@ -472,10 +492,11 @@ function ViewToggle({ mode, onMode }) {
   );
 }
 
-function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onClearAll }) {
+function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSample, onExit, onClearAll }) {
   const docks = ENTITY_PRESETS.filter((p) => p.category === 'dock' || p.category === 'bollard');
   const boats = ENTITY_PRESETS.filter((p) => p.category === 'boat');
   const buoys = ENTITY_PRESETS.filter((p) => p.category === 'buoy');
+  const terrain = ENTITY_PRESETS.filter((p) => p.category === 'terrain');
   const sel = !!selected;
   return (
     <>
@@ -518,7 +539,7 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onC
           </button>
         ))}
         <span className="tool-divider" />
-        <span className="tool-group-label">Buoys</span>
+        <span className="tool-group-label">Marks</span>
         {buoys.map((b) => (
           <button
             key={b.id}
@@ -530,7 +551,23 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onExit, onC
             {b.label}
           </button>
         ))}
+        <span className="tool-divider" />
+        <span className="tool-group-label">Terrain</span>
+        {terrain.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`tool-btn ${tool === t.id ? 'active' : ''}`}
+            onClick={() => onTool(t.id)}
+            title={`${t.label} (${t.length}m × ${t.width}m, ${t.height}m high)`}
+          >
+            {t.label}
+          </button>
+        ))}
         <span className="tool-spacer" />
+        <button type="button" className="tool-btn" onClick={onLoadSample} title="Load the bundled sample training harbor (replaces the map)">
+          ⚓ Sample harbor
+        </button>
         <button type="button" className="tool-btn danger" onClick={onClearAll} title="Remove all">
           Clear all
         </button>

@@ -103,6 +103,9 @@ export function saveWorld(world) {
       sail: e.sail,
       cabin: e.cabin,
       beacon: e.beacon,
+      mark: e.mark,
+      terrain: e.terrain,
+      height: e.height,
     }));
     const data = { entities };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
