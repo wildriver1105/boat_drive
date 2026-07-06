@@ -47,6 +47,9 @@ export function createWorld() {
       // World position under the mouse while idle in edit mode — anchors
       // the translucent placement preview. Null when not applicable.
       hover: null,
+      // In-progress drag-to-size terrain placement:
+      // { presetId, x0, y0, x1, y1 } (world coords) or null.
+      sizing: null,
       dirty: false,
     },
     // Tracking mode — records the boat's racing line for F1-style review:

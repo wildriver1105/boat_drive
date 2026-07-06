@@ -17,7 +17,7 @@ import {
   hitTestThruster,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M, MOORING_SNAP_M, MOORING_CLEAT_HIT_PX } from './constants.js';
-import { createEntity, findEntityAt, snapDockPose } from './entities.js';
+import { createEntity, findEntityAt, snapDockPose, presetById, sizedTerrainPose } from './entities.js';
 import { saveWorld } from './world.js';
 import { BOAT_CLEATS, cleatWorld, mooringPoints, createMooringLine } from './mooring.js';
 
@@ -82,6 +82,7 @@ export function createInput({ canvas, world, onSelect }) {
       return true;
     }
     if (e.code === 'Escape') {
+      world.edit.sizing = null; // cancel an in-progress terrain drag
       world.edit.selectedId = null;
       notifySelect();
       return true;
@@ -253,6 +254,11 @@ export function createInput({ canvas, world, onSelect }) {
       world.edit.selectedId = hit.id;
       world.edit.dragging = true;
       world.edit.dragOffset = { x: wp.x - hit.x, y: wp.y - hit.y };
+    } else if (tool !== 'select' && presetById(tool)?.category === 'terrain') {
+      // Terrain is drawn, not stamped: anchor here, drag to set length+heading.
+      world.edit.sizing = { presetId: tool, x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
+      world.edit.selectedId = null;
+      world.edit.dragging = false;
     } else if (tool !== 'select') {
       const entity = createEntity(tool, wp.x, wp.y);
       if (entity) {
@@ -278,6 +284,12 @@ export function createInput({ canvas, world, onSelect }) {
   }
 
   function handleEditMouseMove(x, y, width, height) {
+    if (world.edit.sizing) {
+      const wp = screenToWorld(x, y, width, height);
+      world.edit.sizing.x1 = wp.x;
+      world.edit.sizing.y1 = wp.y;
+      return;
+    }
     if (!world.edit.dragging) return;
     const wp = screenToWorld(x, y, width, height);
     const e = world.entities.find((en) => en.id === world.edit.selectedId);
@@ -299,6 +311,26 @@ export function createInput({ canvas, world, onSelect }) {
   }
 
   function handleEditMouseUp() {
+    if (world.edit.sizing) {
+      const s = world.edit.sizing;
+      world.edit.sizing = null;
+      const p = presetById(s.presetId);
+      if (p) {
+        const pose = sizedTerrainPose(p, s.x0, s.y0, s.x1, s.y1);
+        const entity = createEntity(s.presetId, pose.x, pose.y, pose.heading);
+        if (entity) {
+          entity.length = pose.length;
+          entity.width = pose.width;
+          world.entities.push(entity);
+          world.edit.selectedId = entity.id;
+          world.edit.dirty = true;
+          saveWorld(world);
+          notifySelect();
+        }
+      }
+      updateCursor();
+      return;
+    }
     if (world.edit.dragging) {
       world.edit.dragging = false;
       saveWorld(world);
@@ -472,7 +504,7 @@ export function createInput({ canvas, world, onSelect }) {
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
-      if (world.edit.dragging) e.preventDefault();
+      if (world.edit.dragging || world.edit.sizing) e.preventDefault();
       return;
     }
 

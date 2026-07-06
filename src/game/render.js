@@ -10,7 +10,7 @@ import {
 } from './constants.js';
 import { throttleLayout, helmLayout, thrusterLayout, isCompactUI } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
-import { presetById, findEntityAt, snapDockPose } from './entities.js';
+import { presetById, findEntityAt, snapDockPose, sizedTerrainPose } from './entities.js';
 import { BOAT_CLEATS, cleatWorld, anchorWorld, mooringPoints } from './mooring.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
@@ -1990,6 +1990,57 @@ function drawEntitySelectionFrame(ctx, e) {
 // mouse. Reuses the real entity art (minus the drop shadow) at low alpha,
 // plus a dashed cyan footprint so it clearly reads as "not placed yet".
 function drawPlacementGhost(ctx, w, h, world) {
+  // Active drag-to-size terrain placement: live preview of the stretched
+  // footprint, plus a length readout so you can hit chart dimensions.
+  const sizing = world.edit.sizing;
+  if (sizing) {
+    const sp = presetById(sizing.presetId);
+    if (!sp) return;
+    const pose = sizedTerrainPose(sp, sizing.x0, sizing.y0, sizing.x1, sizing.y1);
+    const ghost = {
+      id: '__ghost__',
+      presetId: sp.id,
+      category: sp.category,
+      x: pose.x,
+      y: pose.y,
+      heading: pose.heading,
+      length: pose.length,
+      width: pose.width,
+      terrain: sp.terrain,
+      height: sp.height,
+    };
+    const L = pose.length * PX_PER_M;
+    const W = pose.width * PX_PER_M;
+    const sx = w / 2 + (pose.x - world.camera.x) * PX_PER_M;
+    const sy = h / 2 + (pose.y - world.camera.y) * PX_PER_M;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(pose.heading);
+    ctx.globalAlpha = 0.5;
+    drawTerrainEntity(ctx, ghost, 0);
+    ctx.globalAlpha = 0.95;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(130, 220, 255, 0.95)';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(-L / 2 - 3, -W / 2 - 3, L + 6, W + 6);
+    ctx.setLineDash([]);
+    ctx.restore();
+    // Length label — unrotated, floating above the piece's centre.
+    ctx.save();
+    ctx.font = 'bold 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'center';
+    const label = `${pose.length.toFixed(0)} m`;
+    const ly = sy - W / 2 - 14;
+    ctx.fillStyle = 'rgba(6, 22, 34, 0.8)';
+    const tw = ctx.measureText(label).width;
+    roundedRect(ctx, sx - tw / 2 - 7, ly - 12, tw + 14, 17, 5);
+    ctx.fill();
+    ctx.fillStyle = '#aee6ff';
+    ctx.fillText(label, sx, ly);
+    ctx.restore();
+    return;
+  }
+
   const hover = world.edit.hover;
   const tool = world.edit.tool;
   if (!hover || tool === 'select' || world.edit.dragging) return;
@@ -2086,11 +2137,12 @@ function drawEditOverlay(ctx, w, h, world) {
     'EDIT MODE — boat physics paused',
     'W A S D / ←↑→↓   Pan camera',
     'Click             Select / place on open water',
+    'Drag on water     Size & aim terrain while placing',
     'Drag              Move selected (docks snap end-to-end)',
     '[  ]  or  Wheel    Rotate selected (5°)',
     'Shift + [ ] / Wheel  Rotate snap to 45°',
     'Delete            Remove selected',
-    'Esc               Deselect',
+    'Esc               Deselect / cancel placement',
   ];
   const x = w - 16;
   const yTop = h - 16 - (lines.length - 1) * 18 - 6;

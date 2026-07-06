@@ -52,17 +52,57 @@ export const ENTITY_PRESETS = [
   // is metres above the waterline and drives the 3D silhouette (a breakwater
   // you can't see over, a quay you look UP at from the helm, hills that give
   // the coast its skyline).
-  { id: 'bw-long',    label: 'Breakwater 40m', category: 'terrain', terrain: 'breakwater', length: 40, width: 7,  height: 3.6 },
-  { id: 'bw-short',   label: 'Breakwater 20m', category: 'terrain', terrain: 'breakwater', length: 20, width: 7,  height: 3.6 },
-  { id: 'quay-wall',  label: 'Quay 30m',       category: 'terrain', terrain: 'quay',       length: 30, width: 10, height: 2.4 },
-  { id: 'rock-small', label: 'Rock',           category: 'terrain', terrain: 'rock',       length: 3,  width: 3,  height: 1.6 },
-  { id: 'rock-large', label: 'Reef rocks',     category: 'terrain', terrain: 'rock',       length: 8,  width: 6,  height: 2.6 },
-  { id: 'island-hill',label: 'Island 60m',     category: 'terrain', terrain: 'island',     length: 60, width: 42, height: 17 },
-  { id: 'headland',   label: 'Headland 90m',   category: 'terrain', terrain: 'island',     length: 90, width: 55, height: 24 },
+  // Terrain sizes are DEFAULTS / aspect templates — in the editor you drag
+  // across the water to set each piece's length (and, for rocks/islands,
+  // the whole footprint) freely.
+  { id: 'bw-long',    label: 'Breakwater', category: 'terrain', terrain: 'breakwater', length: 40, width: 7,  height: 3.6 },
+  { id: 'quay-wall',  label: 'Quay wall',  category: 'terrain', terrain: 'quay',       length: 30, width: 10, height: 2.4 },
+  { id: 'rock-small', label: 'Rock',       category: 'terrain', terrain: 'rock',       length: 3,  width: 3,  height: 1.6 },
+  { id: 'rock-large', label: 'Reef rocks', category: 'terrain', terrain: 'rock',       length: 8,  width: 6,  height: 2.6 },
+  { id: 'island-hill',label: 'Island',     category: 'terrain', terrain: 'island',     length: 60, width: 42, height: 17 },
+  { id: 'headland',   label: 'Headland',   category: 'terrain', terrain: 'island',     length: 90, width: 55, height: 24 },
 ];
 
 export function presetById(presetId) {
   return ENTITY_PRESETS.find((p) => p.id === presetId) || null;
+}
+
+// ---------- Drag-to-size terrain placement ----------
+// Terrain isn't placed at a fixed preset size: the user anchors a start
+// point and DRAGS — the drag vector sets the length and the heading. Linear
+// works (breakwater / quay) keep their engineering width; area features
+// (rocks / islands) scale their whole footprint, preserving the preset's
+// aspect ratio. Shared by the input layer (finalize) and the renderer
+// (live ghost) so the preview is exactly what gets placed.
+
+const TERRAIN_MIN_LEN = { breakwater: 6, quay: 8, rock: 2, island: 16 };
+const TERRAIN_MAX_LEN = 300;
+
+export function sizedTerrainPose(p, x0, y0, x1, y1) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const dist = Math.hypot(dx, dy);
+  // A plain click (no meaningful drag) falls back to the preset's default
+  // size, centred on the click — same as every other asset.
+  if (dist < 1.2) {
+    return { x: x0, y: y0, heading: 0, length: p.length, width: p.width, isClick: true };
+  }
+  const min = TERRAIN_MIN_LEN[p.terrain] || 3;
+  const length = Math.min(TERRAIN_MAX_LEN, Math.max(min, dist));
+  const width =
+    p.terrain === 'rock' || p.terrain === 'island'
+      ? length * (p.width / p.length)
+      : p.width;
+  const heading = Math.atan2(dy, dx);
+  // Anchor the START of the drag: the piece grows from where you pressed.
+  return {
+    x: x0 + Math.cos(heading) * (length / 2),
+    y: y0 + Math.sin(heading) * (length / 2),
+    heading,
+    length,
+    width,
+    isClick: false,
+  };
 }
 
 let _seq = 0;

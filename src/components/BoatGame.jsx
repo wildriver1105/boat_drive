@@ -561,7 +561,11 @@ function AssetPalette({ tool, onTool }) {
         ))}
       </div>
       <div className="palette-hint">
-        {tool === 'select' ? 'Pick an asset, then click open water' : 'Click open water to place — click the card again to stop'}
+        {tool === 'select'
+          ? 'Pick an asset, then click open water'
+          : ENTITY_PRESETS.find((p) => p.id === tool)?.category === 'terrain'
+            ? 'Drag across open water to size & aim it'
+            : 'Click open water to place — click the card again to stop'}
       </div>
     </div>
   );
