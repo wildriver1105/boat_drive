@@ -78,6 +78,12 @@ export default function BoatGame() {
     fitCanvas();
 
     const input = createInput({ canvas, world, onSelect: setSelectedEntity });
+    // 3D edit picking: route editor mouse points through the aerial camera
+    // onto the water plane whenever a 3D view is active.
+    input.setWorldPicker((sx, sy) => {
+      if (!renderer3d || viewModeRef.current === '2d') return null;
+      return renderer3d.pickWater(sx, sy);
+    });
     const loop = createLoop({
       world,
       input,
@@ -88,7 +94,7 @@ export default function BoatGame() {
         } else {
           const dpr = canvas._dpr || 1;
           renderer3d.draw(wld, mode, canvas.width / dpr, canvas.height / dpr);
-          renderer.drawControlsOnly(wld);
+          renderer.drawControlsOnly(wld, renderer3d.project);
         }
       },
     });
@@ -123,10 +129,11 @@ export default function BoatGame() {
     if (c3) c3.style.display = viewMode === '2d' ? 'none' : 'block';
   }, [viewMode]);
 
-  // The map editor is top-down only — force 2D while editing.
+  // Editing works in the 2D map AND the 3D aerial view (raycast picking).
+  // Only the cockpit is drive-only.
   useEffect(() => {
-    if (editMode) setViewMode('2d');
-  }, [editMode]);
+    if (editMode && viewMode === 'cockpit') setViewMode('aerial');
+  }, [editMode, viewMode]);
 
   // "V" cycles 2D → Aerial → Cockpit (ignored while editing or typing).
   useEffect(() => {
@@ -298,9 +305,7 @@ export default function BoatGame() {
       <canvas ref={canvas3dRef} className="layer-3d" style={{ display: 'none' }} aria-hidden="true" />
       <canvas ref={canvasRef} className="layer-2d" tabIndex={0} aria-label="Boat drive game" />
 
-      {!editMode && (
-        <ViewToggle mode={viewMode} onMode={setViewMode} />
-      )}
+      <ViewToggle mode={viewMode} onMode={setViewMode} cockpitDisabled={editMode} />
 
       {!editMode && (
         <>
@@ -469,25 +474,29 @@ export default function BoatGame() {
   );
 }
 
-function ViewToggle({ mode, onMode }) {
+function ViewToggle({ mode, onMode, cockpitDisabled }) {
   const opts = [
     { id: '2d', label: '2D Map' },
     { id: 'aerial', label: '3D Aerial' },
     { id: 'cockpit', label: 'Cockpit' },
   ];
   return (
-    <div className="view-toggle" role="group" aria-label="View mode">
-      {opts.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          className={`view-btn ${mode === o.id ? 'active' : ''}`}
-          onClick={() => onMode(o.id)}
-          title={o.label + ' (V to cycle)'}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div className={`view-toggle ${cockpitDisabled ? 'edit' : ''}`} role="group" aria-label="View mode">
+      {opts.map((o) => {
+        const disabled = cockpitDisabled && o.id === 'cockpit';
+        return (
+          <button
+            key={o.id}
+            type="button"
+            className={`view-btn ${mode === o.id ? 'active' : ''}`}
+            onClick={() => onMode(o.id)}
+            disabled={disabled}
+            title={disabled ? 'Cockpit is drive-only' : o.label + ' (V to cycle)'}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -96,6 +96,18 @@ canvas {
   color: #fff;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
+.view-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* In edit mode the top centre belongs to the editor bar — dock the view
+   toggle top-right, under the info panel. */
+.view-toggle.edit {
+  left: auto;
+  right: 16px;
+  top: 96px;
+  transform: none;
+}
 
 /* ============================================
    HUD buttons (top-right cluster)
@@ -735,6 +747,14 @@ canvas {
     left: 12px;
     top: 12px;
     transform: none;
+  }
+  /* Edit mode on mobile: the top is the editor bar's, the bottom the
+     palette's — park the toggle just above the palette shelf. */
+  .view-toggle.edit {
+    top: auto;
+    bottom: 252px;
+    left: 8px;
+    right: auto;
   }
   .view-btn {
     padding: 8px 11px;

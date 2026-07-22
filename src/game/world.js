@@ -52,6 +52,8 @@ export function createWorld() {
       sizing: null,
       // In-progress terrain vertex drag: { id, index } or null.
       vertexDrag: null,
+      // 3D edit camera distance (zoomed with - / =).
+      camDist: 40,
       dirty: false,
     },
     // Tracking mode — records the boat's racing line for F1-style review:

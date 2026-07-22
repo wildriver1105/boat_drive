@@ -91,6 +91,15 @@ export function createInput({ canvas, world, onSelect }) {
       else rotateSelected(+ROTATE_FINE);
       return true;
     }
+    // - / = zoom the 3D edit camera (ignored by the 2D top-down view).
+    if (e.code === 'Minus') {
+      world.edit.camDist = Math.min(90, (world.edit.camDist || 40) + 5);
+      return true;
+    }
+    if (e.code === 'Equal') {
+      world.edit.camDist = Math.max(18, (world.edit.camDist || 40) - 5);
+      return true;
+    }
     if (e.code === 'Escape') {
       world.edit.sizing = null; // cancel an in-progress terrain drag
       world.edit.vertexDrag = null;
@@ -171,7 +180,21 @@ export function createInput({ canvas, world, onSelect }) {
     };
   }
 
+  // Optional external unprojection (3D edit view): maps a screen point to
+  // the water plane through the live 3D camera. When it returns a point the
+  // whole editor — selection, drags, placement, terrain sizing, vertex
+  // handles — runs in the 3D view unchanged, because everything downstream
+  // only ever consumes world coordinates.
+  let worldPicker = null;
+  function setWorldPicker(fn) {
+    worldPicker = fn;
+  }
+
   function screenToWorld(sx, sy, width, height) {
+    if (world.edit.mode && worldPicker) {
+      const p = worldPicker(sx, sy, width, height);
+      if (p) return p;
+    }
     return {
       x: world.camera.x + (sx - width / 2) / PX_PER_M,
       y: world.camera.y + (sy - height / 2) / PX_PER_M,
@@ -649,6 +672,7 @@ export function createInput({ canvas, world, onSelect }) {
   window.addEventListener('touchcancel', onTouchEnd);
 
   return {
+    setWorldPicker,
     getKeys() {
       // Momentary thruster command: keyboard and on-screen rocker combine.
       let bow = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);

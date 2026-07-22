@@ -67,12 +67,41 @@ export function createRenderer(canvas) {
   // helm / throttle / thruster widgets + HUD, drawn ON TOP of the WebGL
   // canvas. Reuses the exact same hit-tested widgets the input layer drives,
   // so they're mouse-controllable from the cockpit just like in 2D.
-  function drawControlsOnly(world) {
+  function drawControlsOnly(world, project) {
     const dpr = canvas._dpr || 1;
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+
+    // 3D EDIT view: no drive widgets — just the edit hints, plus the live
+    // length label for a terrain sizing drag, projected from the 3D scene.
+    if (world.edit.mode) {
+      drawEditOverlay(ctx, w, h, world);
+      const s = world.edit.sizing;
+      if (s && project) {
+        const p = presetById(s.presetId);
+        if (p) {
+          const pose = sizedTerrainPose(p, s.x0, s.y0, s.x1, s.y1);
+          const pt = project(pose.x, pose.y);
+          if (pt && pt.visible) {
+            ctx.save();
+            ctx.font = 'bold 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+            ctx.textAlign = 'center';
+            const label = `${pose.length.toFixed(0)} m`;
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(6, 22, 34, 0.8)';
+            roundedRect(ctx, pt.x - tw / 2 - 7, pt.y - 26, tw + 14, 17, 5);
+            ctx.fill();
+            ctx.fillStyle = '#aee6ff';
+            ctx.fillText(label, pt.x, pt.y - 14);
+            ctx.restore();
+          }
+        }
+      }
+      return;
+    }
+
     drawHelm(ctx, w, h, world.boat);
     drawThrottleHandle(ctx, w, h, world.boat);
     drawThrusterPanel(ctx, w, h, world.boat, world.time);
@@ -2417,6 +2446,7 @@ function drawEditOverlay(ctx, w, h, world) {
     'Drag              Move selected (docks snap end-to-end)',
     '[  ]  or  Wheel    Rotate selected (5°)',
     'Shift + [ ] / Wheel  Rotate snap to 45°',
+    '-  /  =           Zoom camera (3D view)',
     'Delete            Remove selected',
     'Esc               Deselect / cancel placement',
   ];

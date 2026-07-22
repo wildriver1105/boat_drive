@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { cleatWorld, anchorWorld } from './mooring.js';
-import { terrainElevationAt } from './entities.js';
+import { terrainElevationAt, presetById, terrainOutline, sizedTerrainPose } from './entities.js';
 import { WAKE_MAX_POINTS } from './constants.js';
 
 // Wave field — kept in lock-step with the GLSL waveH() in the water material
@@ -290,6 +290,137 @@ export function createRenderer3D(canvas) {
   const _lat = new THREE.Vector3();
   const _tmp = new THREE.Vector3();
 
+  // ---------- 3D edit support ----------
+  // Screen ↔ water-plane mapping through the LAST-RENDERED camera. pickWater
+  // feeds the input layer (making the whole editor work in the 3D view);
+  // project feeds overlay labels.
+  const raycaster = new THREE.Raycaster();
+  const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  let lastCam = aerialCam;
+  let lastW = 1;
+  let lastH = 1;
+  const _ndc = new THREE.Vector2();
+  const _pick = new THREE.Vector3();
+
+  function pickWater(sx, sy) {
+    _ndc.set((sx / lastW) * 2 - 1, -((sy / lastH) * 2 - 1));
+    raycaster.setFromCamera(_ndc, lastCam);
+    const hit = raycaster.ray.intersectPlane(waterPlane, _pick);
+    if (!hit) return null;
+    return { x: hit.x, y: hit.z };
+  }
+
+  function project(wx, wy) {
+    const v = new THREE.Vector3(wx, 0, wy).project(lastCam);
+    return {
+      x: ((v.x + 1) / 2) * lastW,
+      y: ((1 - v.y) / 2) * lastH,
+      visible: v.z < 1,
+    };
+  }
+
+  // Edit aids drawn IN the 3D scene: selection footprint, placement/sizing
+  // ghost, and terrain reshape handles (vertex cubes + midpoint spheres).
+  const editAids = new THREE.Group();
+  scene.add(editAids);
+  const flatGeo = new THREE.PlaneGeometry(1, 1);
+  flatGeo.rotateX(-Math.PI / 2);
+  const selMesh = new THREE.Mesh(
+    flatGeo,
+    new THREE.MeshBasicMaterial({ color: '#ffdc5a', transparent: true, opacity: 0.26, depthWrite: false })
+  );
+  selMesh.renderOrder = 4;
+  const ghostMesh = new THREE.Mesh(
+    flatGeo,
+    new THREE.MeshBasicMaterial({ color: '#7dd0ff', transparent: true, opacity: 0.25, depthWrite: false })
+  );
+  ghostMesh.renderOrder = 4;
+  editAids.add(selMesh, ghostMesh);
+  const vtxGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const vtxMat = new THREE.MeshBasicMaterial({ color: '#ffdc5a' });
+  const midGeo = new THREE.SphereGeometry(0.42, 10, 8);
+  const midMat = new THREE.MeshBasicMaterial({ color: '#7dd0ff' });
+  const handlePool = [];
+
+  function syncEditAids(world, mode) {
+    const editing = world.edit.mode && mode !== '2d';
+    editAids.visible = editing;
+    if (!editing) {
+      for (const m of handlePool) m.visible = false;
+      return;
+    }
+
+    const sel = world.entities.find((en) => en.id === world.edit.selectedId);
+    if (sel) {
+      selMesh.visible = true;
+      selMesh.position.set(sel.x, 0.1, sel.y);
+      selMesh.rotation.y = -sel.heading;
+      selMesh.scale.set(sel.length + 1.6, 1, sel.width + 1.6);
+    } else {
+      selMesh.visible = false;
+    }
+
+    // Sizing drag beats hover ghost; both are flat footprint washes.
+    const s = world.edit.sizing;
+    const tool = world.edit.tool;
+    ghostMesh.visible = false;
+    if (s) {
+      const p = presetById(s.presetId);
+      if (p) {
+        const pose = sizedTerrainPose(p, s.x0, s.y0, s.x1, s.y1);
+        ghostMesh.visible = true;
+        ghostMesh.position.set(pose.x, 0.12, pose.y);
+        ghostMesh.rotation.y = -pose.heading;
+        ghostMesh.scale.set(pose.length, 1, pose.width);
+      }
+    } else if (tool !== 'select' && world.edit.hover && !world.edit.dragging && !world.edit.vertexDrag) {
+      const p = presetById(tool);
+      if (p) {
+        ghostMesh.visible = true;
+        ghostMesh.position.set(world.edit.hover.x, 0.12, world.edit.hover.y);
+        ghostMesh.rotation.y = 0;
+        ghostMesh.scale.set(p.length, 1, p.width);
+      }
+    }
+
+    // Terrain reshape handles on the selected terrain.
+    const handles = [];
+    if (sel && sel.category === 'terrain') {
+      const outline = terrainOutline(sel);
+      const cosH = Math.cos(sel.heading);
+      const sinH = Math.sin(sel.heading);
+      const toWorld = (lx, ly) => ({
+        wx: sel.x + lx * cosH - ly * sinH,
+        wy: sel.y + lx * sinH + ly * cosH,
+      });
+      for (let i = 0; i < outline.length; i++) {
+        const [ax, ay] = outline[i];
+        const [bx, by] = outline[(i + 1) % outline.length];
+        handles.push({ ...toWorld(ax, ay), mid: false });
+        handles.push({ ...toWorld((ax + bx) / 2, (ay + by) / 2), mid: true });
+      }
+    }
+    while (handlePool.length < handles.length) {
+      const m = new THREE.Mesh(vtxGeo, vtxMat);
+      m.renderOrder = 5;
+      editAids.add(m);
+      handlePool.push(m);
+    }
+    for (let i = 0; i < handlePool.length; i++) {
+      const m = handlePool[i];
+      if (i < handles.length) {
+        const hd = handles[i];
+        m.visible = true;
+        m.geometry = hd.mid ? midGeo : vtxGeo;
+        m.material = hd.mid ? midMat : vtxMat;
+        const lift = terrainElevationAt(world.entities, hd.wx, hd.wy);
+        m.position.set(hd.wx, lift + (hd.mid ? 0.55 : 0.75), hd.wy);
+      } else {
+        m.visible = false;
+      }
+    }
+  }
+
   function syncEntities(world) {
     const seen = new Set();
     for (const e of world.entities) {
@@ -345,19 +476,30 @@ export function createRenderer3D(canvas) {
     syncTrack(world, world.time);
     syncMooring(world, world.time);
     syncWake(world, world.time);
-    water.update(world.time, b.x, b.y);
-    farWater.position.set(b.x, -0.5, b.y);
+    syncEditAids(world, mode);
 
-    // Keep the sun's shadow frustum centred on the boat so shadows stay
-    // crisp wherever it sails.
-    sun.position.set(b.x + SUN_DIR.x * 140, SUN_DIR.y * 140, b.y + SUN_DIR.z * 140);
-    sun.target.position.set(b.x, 0, b.y);
+    // In edit mode the user pans freely — centre the water, far plane and
+    // shadow frustum on the EDIT camera anchor instead of the boat.
+    const focusX = world.edit.mode ? world.camera.x : b.x;
+    const focusY = world.edit.mode ? world.camera.y : b.y;
+    water.update(world.time, focusX, focusY);
+    farWater.position.set(focusX, -0.5, focusY);
+    sun.position.set(focusX + SUN_DIR.x * 140, SUN_DIR.y * 140, focusY + SUN_DIR.z * 140);
+    sun.target.position.set(focusX, 0, focusY);
     sun.target.updateMatrixWorld();
 
     let cam;
-    if (mode === 'cockpit') {
+    if (mode === 'cockpit' && !world.edit.mode) {
       // Camera is fixed to the helm rig — nothing to position per frame.
       cam = cockpitCam;
+    } else if (world.edit.mode) {
+      // Edit bird view: north-up, centred on the pan anchor, zoomable with
+      // - / = so WASD panning stays screen-aligned and predictable.
+      const d = world.edit.camDist || 40;
+      aerialCam.position.set(focusX, d * 0.95, focusY + d * 0.85);
+      aerialCam.lookAt(focusX, 0, focusY);
+      aerialCam.updateMatrixWorld(true);
+      cam = aerialCam;
     } else {
       // Chase cam, raised and pulled back, aiming below the boat so the hull
       // rides in the upper-centre of the frame — clear of the control overlay
@@ -373,6 +515,9 @@ export function createRenderer3D(canvas) {
       cam.aspect = w / h;
       cam.updateProjectionMatrix();
     }
+    lastCam = cam;
+    lastW = w;
+    lastH = h;
     renderer.render(scene, cam);
   }
 
@@ -396,7 +541,7 @@ export function createRenderer3D(canvas) {
     renderer.dispose();
   }
 
-  return { draw, resize, dispose, _debug: { renderer, scene, sun, water, boat } };
+  return { draw, resize, dispose, pickWater, project, _debug: { renderer, scene, sun, water, boat } };
 }
 
 // ---------------- Water ----------------
