@@ -39,6 +39,11 @@ const D = [
   ['buoy-lighthouse', -18, -6, 0],       // west head light
   ['bollard', 14, -8, 0],
   ['bollard', -20, -12, 0],
+  // Fixed beacons ON the works / hazards.
+  ['bcn-lat-s', 22, -8, 0],              // red beacon on the east breakwater
+  ['bcn-lat-p', -28, -12, 0],            // green beacon on the west breakwater
+  ['bcn-danger', 36, 54, 0],             // isolated-danger beacon on the reef
+  ['bcn-card-e', -72, 8, 0],             // east cardinal beacon on headland rocks
 
   // ---------- Inner harbour ----------
   // West commercial quay wall (two 30 m sections, wall running N–S).

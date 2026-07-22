@@ -50,6 +50,8 @@ export function createWorld() {
       // In-progress drag-to-size terrain placement:
       // { presetId, x0, y0, x1, y1 } (world coords) or null.
       sizing: null,
+      // In-progress terrain vertex drag: { id, index } or null.
+      vertexDrag: null,
       dirty: false,
     },
     // Tracking mode — records the boat's racing line for F1-style review:
@@ -107,8 +109,10 @@ export function saveWorld(world) {
       cabin: e.cabin,
       beacon: e.beacon,
       mark: e.mark,
+      aid: e.aid,
       terrain: e.terrain,
       height: e.height,
+      poly: e.poly,
     }));
     const data = { entities };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -159,7 +163,7 @@ export function clearTrack(world) {
 // serializes to null in JSON) and against hand-edited storage.
 function sanitizeEntities(list) {
   if (!Array.isArray(list)) return [];
-  return list.filter(
+  const ok = list.filter(
     (e) =>
       e &&
       typeof e === 'object' &&
@@ -169,6 +173,20 @@ function sanitizeEntities(list) {
       Number.isFinite(e.length) && e.length > 0 &&
       Number.isFinite(e.width) && e.width > 0
   );
+  // A corrupt polygon degrades to the procedural outline instead of
+  // poisoning the renderers / collision solver.
+  for (const e of ok) {
+    if (e.poly !== undefined) {
+      const valid =
+        Array.isArray(e.poly) &&
+        e.poly.length >= 3 &&
+        e.poly.every(
+          (v) => Array.isArray(v) && v.length === 2 && Number.isFinite(v[0]) && Number.isFinite(v[1])
+        );
+      if (!valid) delete e.poly;
+    }
+  }
+  return ok;
 }
 
 // Called from the loop after each fixed physics step. Maintains the wake

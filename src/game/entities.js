@@ -43,6 +43,18 @@ export const ENTITY_PRESETS = [
   { id: 'buoy-safewater',  label: 'Safe water',      category: 'buoy', length: 1.2, width: 1.2, mark: 'safe' },
   { id: 'buoy-special',    label: 'Special (×)',     category: 'buoy', length: 1.0, width: 1.0, mark: 'special' },
   { id: 'buoy-wreck',      label: 'Wreck (new)',     category: 'buoy', length: 1.2, width: 1.2, mark: 'wreck' },
+  // Beacons (입표) — FIXED aids on a pile: same IALA daymark system but
+  // driven into the bottom or standing on land/harbour works. `aid:'beacon'`
+  // switches both renderers to the pile treatment (no bobbing), and beacons
+  // may be placed ON terrain (breakwater heads, rocks, islands).
+  { id: 'bcn-lat-s',  label: 'Bn red (stbd)',    category: 'buoy', length: 0.9, width: 0.9, mark: 'lat-s',  aid: 'beacon' },
+  { id: 'bcn-lat-p',  label: 'Bn green (port)',  category: 'buoy', length: 0.9, width: 0.9, mark: 'lat-p',  aid: 'beacon' },
+  { id: 'bcn-card-n', label: 'Bn cardinal N',    category: 'buoy', length: 0.9, width: 0.9, mark: 'card-n', aid: 'beacon' },
+  { id: 'bcn-card-e', label: 'Bn cardinal E',    category: 'buoy', length: 0.9, width: 0.9, mark: 'card-e', aid: 'beacon' },
+  { id: 'bcn-card-s', label: 'Bn cardinal S',    category: 'buoy', length: 0.9, width: 0.9, mark: 'card-s', aid: 'beacon' },
+  { id: 'bcn-card-w', label: 'Bn cardinal W',    category: 'buoy', length: 0.9, width: 0.9, mark: 'card-w', aid: 'beacon' },
+  { id: 'bcn-danger', label: 'Bn isol danger',   category: 'buoy', length: 0.9, width: 0.9, mark: 'danger', aid: 'beacon' },
+  { id: 'bcn-special',label: 'Bn special (×)',   category: 'buoy', length: 0.9, width: 0.9, mark: 'special', aid: 'beacon' },
   { id: 'buoy-yellow',     label: 'Race mark',       category: 'buoy', length: 1.2, width: 1.2 },
   { id: 'buoy-mooring',    label: 'Mooring ball',    category: 'buoy', length: 0.8, width: 0.8 },
   { id: 'buoy-lighthouse', label: 'Lighthouse',      category: 'buoy', length: 2.4, width: 2.4, beacon: true },
@@ -126,9 +138,132 @@ export function createEntity(presetId, x, y, heading = 0) {
     cabin: p.cabin,
     beacon: p.beacon,
     mark: p.mark,
+    aid: p.aid,
     terrain: p.terrain,
     height: p.height,
   };
+}
+
+// Fixed aids (beacons, the lighthouse, bollards) stand on structures — they
+// may be placed ON terrain instead of only on open water.
+export function canSitOnTerrain(p) {
+  return !!p && (p.aid === 'beacon' || p.beacon === true || p.category === 'bollard');
+}
+
+// ---------- Vector-editable terrain outlines ----------
+// Terrain can carry an explicit polygon (`poly`: local-frame [lx, ly] pairs,
+// closed implicitly). Without one, rocks/islands use a deterministic harmonic
+// outline and breakwaters/quays are rectangles; grabbing a vertex handle in
+// the editor materialises that outline into `poly`, after which the shape is
+// freely editable vertex-by-vertex, vector-graphics style.
+
+// Deterministic per-entity hash — MUST match render.js's entityHash01 so the
+// sampled handles land exactly on the drawn procedural outline.
+function hash01(e, salt) {
+  let h = 2166136261 ^ salt;
+  const s = String(e.id || e.presetId || 'x');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h % 1000) / 1000;
+}
+
+// Current outline of a terrain entity in LOCAL frame. Uses e.poly when
+// present; otherwise samples the same shape the renderers draw.
+export function terrainOutline(e, n) {
+  if (Array.isArray(e.poly) && e.poly.length >= 3) return e.poly;
+  const rx = e.length / 2;
+  const ry = e.width / 2;
+  if (e.terrain === 'breakwater' || e.terrain === 'quay') {
+    // Rectangle with edge midpoints (8 handles) for flexible reshaping.
+    return [
+      [-rx, -ry], [0, -ry], [rx, -ry], [rx, 0],
+      [rx, ry], [0, ry], [-rx, ry], [-rx, 0],
+    ];
+  }
+  const N = n || 12;
+  const p1 = hash01(e, 7) * Math.PI * 2;
+  const p2 = hash01(e, 31) * Math.PI * 2;
+  const a1 = 0.1 + hash01(e, 51) * 0.08;
+  const a2 = 0.06 + hash01(e, 77) * 0.06;
+  const out = [];
+  for (let i = 0; i < N; i++) {
+    const th = (i / N) * Math.PI * 2;
+    const m = 1 + a1 * Math.sin(3 * th + p1) + a2 * Math.sin(5 * th + p2);
+    out.push([Math.cos(th) * rx * m, Math.sin(th) * ry * m]);
+  }
+  return out;
+}
+
+// Materialise the current outline into an editable polygon (no-op if the
+// entity already has one). Returns the poly.
+export function ensureTerrainPoly(e) {
+  if (!Array.isArray(e.poly) || e.poly.length < 3) {
+    e.poly = terrainOutline(e).map(([x, y]) => [x, y]);
+    e.polyRev = (e.polyRev || 0) + 1;
+  }
+  return e.poly;
+}
+
+// Keep length/width as the poly's bounding box — culling, broadphase,
+// selection hit-tests and the elevation approximation all key off them.
+export function updateTerrainBounds(e) {
+  if (!Array.isArray(e.poly) || e.poly.length < 3) return;
+  let mx = 1;
+  let my = 1;
+  for (const [x, y] of e.poly) {
+    if (Math.abs(x) > mx) mx = Math.abs(x);
+    if (Math.abs(y) > my) my = Math.abs(y);
+  }
+  e.length = mx * 2;
+  e.width = my * 2;
+}
+
+export function polyCentroid(poly) {
+  let sx = 0;
+  let sy = 0;
+  for (const [x, y] of poly) {
+    sx += x;
+    sy += y;
+  }
+  return [sx / poly.length, sy / poly.length];
+}
+
+// Approximate deck/ground height (m above water) of the terrain under a world
+// point — used by the 3D renderer to stand fixed aids on breakwaters, quays,
+// rocks and island slopes instead of sinking them to sea level. Returns 0 on
+// open water. Mirrors the silhouettes built in render3d's makeTerrainMesh.
+export function terrainElevationAt(entities, wx, wy) {
+  let best = 0;
+  for (const e of entities) {
+    if (e.category !== 'terrain') continue;
+    const cosH = Math.cos(e.heading);
+    const sinH = Math.sin(e.heading);
+    const dx = wx - e.x;
+    const dy = wy - e.y;
+    const lx = dx * cosH + dy * sinH;
+    const ly = -dx * sinH + dy * cosH;
+    const H = e.height || 3;
+    let h = 0;
+    if (e.terrain === 'quay') {
+      if (Math.abs(lx) <= e.length / 2 && Math.abs(ly) <= e.width / 2) h = H;
+    } else if (e.terrain === 'breakwater') {
+      if (Math.abs(lx) <= e.length / 2 && Math.abs(ly) <= e.width / 2) {
+        // Concrete crest along the middle band, rubble slope toward the edges.
+        const lyn = Math.abs(ly) / (e.width / 2);
+        h = lyn < 0.5 ? H * 0.62 + 0.3 : 0.3;
+      }
+    } else if (e.terrain === 'rock') {
+      if (Math.abs(lx) <= e.length / 2 && Math.abs(ly) <= e.width / 2) h = H * 0.55;
+    } else if (e.terrain === 'island') {
+      // Elliptical cone approximation of the hill.
+      const rr = Math.hypot(lx / (e.length / 2), ly / (e.width / 2));
+      if (rr < 1.02) h = 1.0 + H * 0.62 * Math.max(0, 1 - rr);
+    }
+    if (h > best) best = h;
+  }
+  return best;
 }
 
 // Restore sequence counter when loading from storage so new ids don't collide.

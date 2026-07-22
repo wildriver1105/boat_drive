@@ -17,7 +17,17 @@ import {
   hitTestThruster,
 } from './ui-layout.js';
 import { HELM_MAX_ANGLE, PX_PER_M, MOORING_SNAP_M, MOORING_CLEAT_HIT_PX } from './constants.js';
-import { createEntity, findEntityAt, snapDockPose, presetById, sizedTerrainPose } from './entities.js';
+import {
+  createEntity,
+  findEntityAt,
+  snapDockPose,
+  presetById,
+  sizedTerrainPose,
+  canSitOnTerrain,
+  terrainOutline,
+  ensureTerrainPoly,
+  updateTerrainBounds,
+} from './entities.js';
 import { saveWorld } from './world.js';
 import { BOAT_CLEATS, cleatWorld, mooringPoints, createMooringLine } from './mooring.js';
 
@@ -83,6 +93,7 @@ export function createInput({ canvas, world, onSelect }) {
     }
     if (e.code === 'Escape') {
       world.edit.sizing = null; // cancel an in-progress terrain drag
+      world.edit.vertexDrag = null;
       world.edit.selectedId = null;
       notifySelect();
       return true;
@@ -241,16 +252,77 @@ export function createInput({ canvas, world, onSelect }) {
 
   // ---------- Edit-mode pointer ----------
 
+  // World point → the entity's local frame.
+  function worldToLocal(e, wp) {
+    const cosH = Math.cos(e.heading);
+    const sinH = Math.sin(e.heading);
+    const dx = wp.x - e.x;
+    const dy = wp.y - e.y;
+    return { lx: dx * cosH + dy * sinH, ly: -dx * sinH + dy * cosH };
+  }
+
+  // Which reshape handle of the selected terrain is under the point?
+  // Vertices win over edge midpoints. Returns { index, mid, lx, ly } or null.
+  const HANDLE_HIT_M = 14 / PX_PER_M;
+  function hitTerrainHandle(e, wp) {
+    const outline = terrainOutline(e);
+    const local = worldToLocal(e, wp);
+    for (let i = 0; i < outline.length; i++) {
+      const [vx, vy] = outline[i];
+      if (Math.hypot(local.lx - vx, local.ly - vy) <= HANDLE_HIT_M) {
+        return { index: i, mid: false, lx: vx, ly: vy };
+      }
+    }
+    for (let i = 0; i < outline.length; i++) {
+      const [ax, ay] = outline[i];
+      const [bx, by] = outline[(i + 1) % outline.length];
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      if (Math.hypot(local.lx - mx, local.ly - my) <= HANDLE_HIT_M * 0.85) {
+        return { index: i, mid: true, lx: mx, ly: my };
+      }
+    }
+    return null;
+  }
+
   function handleEditMouseDown(x, y, width, height) {
     const wp = screenToWorld(x, y, width, height);
     const tool = world.edit.tool;
+
+    // Reshape handles on the SELECTED terrain take priority: grab a vertex
+    // to move it, grab an edge midpoint to insert a new vertex there.
+    const selTerrain = world.entities.find(
+      (en) => en.id === world.edit.selectedId && en.category === 'terrain'
+    );
+    if (selTerrain) {
+      const grab = hitTerrainHandle(selTerrain, wp);
+      if (grab) {
+        ensureTerrainPoly(selTerrain);
+        let index = grab.index;
+        if (grab.mid) {
+          selTerrain.poly.splice(grab.index + 1, 0, [grab.lx, grab.ly]);
+          index = grab.index + 1;
+        }
+        selTerrain.polyRev = (selTerrain.polyRev || 0) + 1;
+        world.edit.vertexDrag = { id: selTerrain.id, index };
+        world.edit.dirty = true;
+        updateCursor();
+        return;
+      }
+    }
 
     // Clicking an existing entity selects it (and starts a move drag) — in
     // ANY tool, so you never stack a new item on top of one you meant to
     // grab. Placement only happens on open water. Rotation is keyboard-only
     // ([ / ], Shift for 45° snap) so it never fights placement.
     const hit = findEntityAt(wp.x, wp.y, world.entities);
-    if (hit) {
+    // Fixed aids (beacons / lighthouse / bollard) may be planted ON terrain:
+    // with such a tool armed, clicking a terrain entity places instead of
+    // selecting it.
+    const toolPreset = tool !== 'select' ? presetById(tool) : null;
+    const plantOnTerrain =
+      hit && hit.category === 'terrain' && canSitOnTerrain(toolPreset);
+    if (hit && !plantOnTerrain) {
       world.edit.selectedId = hit.id;
       world.edit.dragging = true;
       world.edit.dragOffset = { x: wp.x - hit.x, y: wp.y - hit.y };
@@ -284,6 +356,19 @@ export function createInput({ canvas, world, onSelect }) {
   }
 
   function handleEditMouseMove(x, y, width, height) {
+    if (world.edit.vertexDrag) {
+      const wp = screenToWorld(x, y, width, height);
+      const d = world.edit.vertexDrag;
+      const e = world.entities.find((en) => en.id === d.id);
+      if (e && Array.isArray(e.poly) && e.poly[d.index]) {
+        const local = worldToLocal(e, wp);
+        e.poly[d.index] = [local.lx, local.ly];
+        updateTerrainBounds(e);
+        e.polyRev = (e.polyRev || 0) + 1;
+        world.edit.dirty = true;
+      }
+      return;
+    }
     if (world.edit.sizing) {
       const wp = screenToWorld(x, y, width, height);
       world.edit.sizing.x1 = wp.x;
@@ -311,6 +396,28 @@ export function createInput({ canvas, world, onSelect }) {
   }
 
   function handleEditMouseUp() {
+    if (world.edit.vertexDrag) {
+      const d = world.edit.vertexDrag;
+      world.edit.vertexDrag = null;
+      const e = world.entities.find((en) => en.id === d.id);
+      // Dropping a vertex onto a neighbour merges them (vector-editor style
+      // delete) — as long as the polygon keeps at least a triangle.
+      if (e && Array.isArray(e.poly) && e.poly.length > 3 && e.poly[d.index]) {
+        const n = e.poly.length;
+        const p = e.poly[d.index];
+        const prev = e.poly[(d.index - 1 + n) % n];
+        const next = e.poly[(d.index + 1) % n];
+        const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.8;
+        if (near(p, prev) || near(p, next)) {
+          e.poly.splice(d.index, 1);
+          e.polyRev = (e.polyRev || 0) + 1;
+          updateTerrainBounds(e);
+        }
+      }
+      saveWorld(world);
+      updateCursor();
+      return;
+    }
     if (world.edit.sizing) {
       const s = world.edit.sizing;
       world.edit.sizing = null;
@@ -504,7 +611,7 @@ export function createInput({ canvas, world, onSelect }) {
 
     if (world.edit.mode) {
       handleEditMouseMove(p.x, p.y, p.width, p.height);
-      if (world.edit.dragging || world.edit.sizing) e.preventDefault();
+      if (world.edit.dragging || world.edit.sizing || world.edit.vertexDrag) e.preventDefault();
       return;
     }
 

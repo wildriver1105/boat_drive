@@ -10,7 +10,15 @@ import {
 } from './constants.js';
 import { throttleLayout, helmLayout, thrusterLayout, isCompactUI } from './ui-layout.js';
 import { createFx, getVignette } from './fx.js';
-import { presetById, findEntityAt, snapDockPose, sizedTerrainPose } from './entities.js';
+import {
+  presetById,
+  findEntityAt,
+  snapDockPose,
+  sizedTerrainPose,
+  canSitOnTerrain,
+  terrainOutline,
+  polyCentroid,
+} from './entities.js';
 import { BOAT_CLEATS, cleatWorld, anchorWorld, mooringPoints } from './mooring.js';
 
 // Build a renderer bound to a specific canvas. Returns a draw(world) function.
@@ -811,7 +819,30 @@ const MARK_COLORS = {
 };
 
 function drawChartMark(ctx, e, time, r) {
-  const C = MARK_COLORS;
+  // Beacons (입표): a FIXED pile with a daymark board — drawn as a white
+  // diamond plate carrying the IALA pattern, no bobbing ripple.
+  if (e.aid === 'beacon') {
+    ctx.beginPath();
+    ctx.arc(1.2, 2, r * 0.9, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.fill();
+    ctx.save();
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#eef2f6';
+    ctx.strokeStyle = 'rgba(10, 14, 20, 0.8)';
+    ctx.lineWidth = 1;
+    roundedRect(ctx, -r * 1.02, -r * 1.02, r * 2.04, r * 2.04, r * 0.2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    paintMarkPattern(ctx, e, r * 0.72);
+    // Centre pile head.
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.16, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a212b';
+    ctx.fill();
+    return;
+  }
 
   // Bobbing ripple (same treatment as plain buoys).
   const phase = entityHash01(e, 13);
@@ -829,6 +860,14 @@ function drawChartMark(ctx, e, time, r) {
   ctx.arc(1.5, 2.5, r, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
   ctx.fill();
+
+  paintMarkPattern(ctx, e, r);
+}
+
+// The IALA colour pattern + topmark glyph, drawn as a disc of radius r —
+// shared by floating buoys and (smaller, on a plate) beacon daymarks.
+function paintMarkPattern(ctx, e, r) {
+  const C = MARK_COLORS;
 
   const disc = (color) => {
     ctx.beginPath();
@@ -979,6 +1018,21 @@ function drawChartMark(ctx, e, time, r) {
 // frequency harmonics seeded from the entity id, so every rock / island gets
 // its own stable shape.
 function terrainPath(ctx, e, scale = 1) {
+  // Vertex-edited polygon: draw it directly (scaled around its centroid so
+  // the sand fringe / contour rings still work).
+  if (Array.isArray(e.poly) && e.poly.length >= 3) {
+    const [cx0, cy0] = polyCentroid(e.poly);
+    ctx.beginPath();
+    for (let i = 0; i <= e.poly.length; i++) {
+      const [vx, vy] = e.poly[i % e.poly.length];
+      const x = (cx0 + (vx - cx0) * scale) * PX_PER_M;
+      const y = (cy0 + (vy - cy0) * scale) * PX_PER_M;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    return;
+  }
   const rx = (e.length * PX_PER_M * scale) / 2;
   const ry = (e.width * PX_PER_M * scale) / 2;
   const p1 = entityHash01(e, 7) * Math.PI * 2;
@@ -1001,6 +1055,64 @@ function terrainPath(ctx, e, scale = 1) {
 function drawTerrainEntity(ctx, e, time) {
   const L = e.length * PX_PER_M;
   const W = e.width * PX_PER_M;
+
+  if (e.terrain === 'breakwater' && Array.isArray(e.poly) && e.poly.length >= 3) {
+    // Vertex-edited breakwater: armour fill + crest along the shrunken poly.
+    ctx.save();
+    ctx.translate(3, 5);
+    terrainPath(ctx, e, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fill();
+    ctx.restore();
+    terrainPath(ctx, e, 1);
+    ctx.fillStyle = '#484d54';
+    ctx.fill();
+    ctx.strokeStyle = '#1c2025';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.save();
+    terrainPath(ctx, e, 1);
+    ctx.clip();
+    const n = Math.max(14, Math.floor(e.length * 1.5));
+    for (let k = 0; k < n; k++) {
+      const hx = entityHash01(e, k * 3 + 1);
+      const hy = entityHash01(e, k * 3 + 2);
+      const hs = entityHash01(e, k * 3 + 3);
+      ctx.fillStyle = hs > 0.5 ? 'rgba(130,138,146,0.5)' : 'rgba(20,24,28,0.4)';
+      ctx.beginPath();
+      ctx.arc((hx - 0.5) * L, (hy - 0.5) * W, 1.5 + hs * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    terrainPath(ctx, e, 0.5);
+    ctx.fillStyle = '#8d939b';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,24,28,0.5)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    return;
+  }
+
+  if (e.terrain === 'quay' && Array.isArray(e.poly) && e.poly.length >= 3) {
+    // Vertex-edited quay: concrete slab in the drawn shape + inset coping.
+    ctx.save();
+    ctx.translate(3, 5);
+    terrainPath(ctx, e, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fill();
+    ctx.restore();
+    terrainPath(ctx, e, 1);
+    ctx.fillStyle = '#8b9198';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2e33';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    terrainPath(ctx, e, 0.9);
+    ctx.strokeStyle = 'rgba(240,244,248,0.45)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    return;
+  }
 
   if (e.terrain === 'breakwater') {
     // Rubble-mound breakwater: dark armour stone slopes + concrete crest.
@@ -1125,7 +1237,58 @@ function drawTerrainEntity(ctx, e, time) {
     return;
   }
 
-  // Island / headland — sandy fringe, grassy slopes, chart-like contour rings.
+  // Island / headland.
+  if (Array.isArray(e.poly) && e.poly.length >= 3) {
+    // Vertex-edited island: everything must follow the ACTUAL coastline.
+    // Scaling the polygon around its centroid breaks on concave shapes
+    // (rings drift out over the water), so instead:
+    //   • sand fringe = a stroked band along the coast
+    //   • contours    = EROSION bands (distance-from-shore), which hug every
+    //     lobe and naturally vanish across narrow necks, like a real chart.
+    ctx.save();
+    ctx.translate(4, 6);
+    terrainPath(ctx, e, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fill();
+    ctx.restore();
+    terrainPath(ctx, e, 1);
+    ctx.strokeStyle = '#d9c78f';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2 * 1.3 * PX_PER_M; // ~1.3 m of beach outside the coast
+    ctx.stroke();
+    terrainPath(ctx, e, 1);
+    const glp = ctx.createRadialGradient(-L * 0.1, -W * 0.1, 2, 0, 0, Math.max(L, W) * 0.62);
+    glp.addColorStop(0, '#7ba25c');
+    glp.addColorStop(0.7, '#5e8a4a');
+    glp.addColorStop(1, '#48703a');
+    ctx.fillStyle = glp;
+    ctx.fill();
+    ctx.strokeStyle = '#2c421f';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    const spr = islandContourSprite(e);
+    if (spr) {
+      const scale = PX_PER_M / spr.k;
+      ctx.drawImage(
+        spr.canvas,
+        spr.minX * PX_PER_M,
+        spr.minY * PX_PER_M,
+        spr.canvas.width * scale,
+        spr.canvas.height * scale
+      );
+    }
+    // Shore rocks pinned to actual coast vertices.
+    for (let k = 0; k < e.poly.length; k += 3) {
+      const [vx, vy] = e.poly[k];
+      ctx.beginPath();
+      ctx.arc(vx * 0.97 * PX_PER_M, vy * 0.97 * PX_PER_M, 1.6 + entityHash01(e, 70 + k) * 2.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#57503f';
+      ctx.fill();
+    }
+    return;
+  }
+
+  // Procedural island — sandy fringe, grassy slopes, chart-like contour rings.
   ctx.save();
   ctx.translate(4, 6);
   terrainPath(ctx, e, 1.02);
@@ -1167,6 +1330,86 @@ function drawTerrainEntity(ctx, e, time) {
     ctx.fillStyle = '#57503f';
     ctx.fill();
   }
+}
+
+// Erosion-band contour sprite for a vertex-edited island: each level fills
+// the polygon, then punches out a boundary band of width d with a
+// destination-out stroke — leaving exactly the "≥ d from shore" region.
+// Cached per entity revision (rebuilt live while a vertex is dragged).
+const _contourCache = new Map(); // id → { rev, canvas, minX, minY, k }
+let _contourScratch = null;
+
+function islandContourSprite(e) {
+  const rev = e.polyRev || 0;
+  const hit = _contourCache.get(e.id);
+  if (hit && hit.rev === rev) return hit;
+
+  const poly = e.poly;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of poly) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  const pad = 1;
+  const k = PX_PER_M / 2; // half-res is plenty for soft terraces
+  const w = Math.max(8, Math.ceil((maxX - minX + pad * 2) * k));
+  const h = Math.max(8, Math.ceil((maxY - minY + pad * 2) * k));
+  if (w > 4096 || h > 4096) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const sctx = canvas.getContext('2d');
+  if (!_contourScratch) _contourScratch = document.createElement('canvas');
+  const tmp = _contourScratch;
+  if (tmp.width < w) tmp.width = w;
+  if (tmp.height < h) tmp.height = h;
+  const t = tmp.getContext('2d');
+
+  const trace = (c) => {
+    c.beginPath();
+    poly.forEach(([x, y], i) => {
+      const px = (x - minX + pad) * k;
+      const py = (y - minY + pad) * k;
+      if (i === 0) c.moveTo(px, py);
+      else c.lineTo(px, py);
+    });
+    c.closePath();
+  };
+
+  const inset = Math.min(e.length, e.width) / 2;
+  const levels = [
+    { d: inset * 0.18, fill: 'rgba(52, 78, 38, 0.32)' },
+    { d: inset * 0.36, fill: 'rgba(43, 66, 31, 0.36)' },
+    { d: inset * 0.54, fill: 'rgba(35, 56, 26, 0.4)' },
+  ];
+  for (const lv of levels) {
+    t.setTransform(1, 0, 0, 1, 0, 0);
+    t.clearRect(0, 0, w, h);
+    trace(t);
+    t.fillStyle = lv.fill;
+    t.fill();
+    t.globalCompositeOperation = 'destination-out';
+    t.lineJoin = 'round';
+    t.lineCap = 'round';
+    t.lineWidth = Math.max(0.5, lv.d * 2 * k);
+    trace(t);
+    t.stroke();
+    t.globalCompositeOperation = 'source-over';
+    sctx.drawImage(tmp, 0, 0, w, h, 0, 0, w, h);
+  }
+
+  const rec = { rev, canvas, minX: minX - pad, minY: minY - pad, k };
+  _contourCache.set(e.id, rec);
+  if (_contourCache.size > 48) {
+    _contourCache.delete(_contourCache.keys().next().value);
+  }
+  return rec;
 }
 
 function drawStaticBoatEntity(ctx, e) {
@@ -1981,6 +2224,34 @@ function drawEntitySelectionFrame(ctx, e) {
   ctx.lineTo(L / 2 + 3, 5);
   ctx.closePath();
   ctx.fill();
+
+  // Terrain reshape handles — vertex squares (drag to move; drop onto a
+  // neighbour to delete) + edge-midpoint dots (drag to add a vertex).
+  if (e.category === 'terrain') {
+    const outline = terrainOutline(e);
+    for (let i = 0; i < outline.length; i++) {
+      const [ax, ay] = outline[i];
+      const [bx, by] = outline[(i + 1) % outline.length];
+      const mx = ((ax + bx) / 2) * PX_PER_M;
+      const my = ((ay + by) / 2) * PX_PER_M;
+      ctx.beginPath();
+      ctx.arc(mx, my, 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(120, 220, 255, 0.75)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(10, 20, 30, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    for (const [vx, vy] of outline) {
+      const x = vx * PX_PER_M;
+      const y = vy * PX_PER_M;
+      ctx.fillStyle = '#ffdc5a';
+      ctx.strokeStyle = 'rgba(20, 16, 4, 0.9)';
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(x - 4.5, y - 4.5, 9, 9);
+      ctx.strokeRect(x - 4.5, y - 4.5, 9, 9);
+    }
+  }
   ctx.restore();
 }
 
@@ -2047,7 +2318,9 @@ function drawPlacementGhost(ctx, w, h, world) {
   const p = presetById(tool);
   if (!p) return;
   // Over an existing entity a click selects instead of placing — no ghost.
-  if (findEntityAt(hover.x, hover.y, world.entities)) return;
+  // Exception: fixed aids show their ghost over TERRAIN (they plant on it).
+  const under = findEntityAt(hover.x, hover.y, world.entities);
+  if (under && !(under.category === 'terrain' && canSitOnTerrain(p))) return;
 
   const ghost = {
     id: '__ghost__',
@@ -2063,6 +2336,7 @@ function drawPlacementGhost(ctx, w, h, world) {
     cabin: p.cabin,
     beacon: p.beacon,
     mark: p.mark,
+    aid: p.aid,
     terrain: p.terrain,
     height: p.height,
   };
@@ -2138,6 +2412,8 @@ function drawEditOverlay(ctx, w, h, world) {
     'W A S D / ←↑→↓   Pan camera',
     'Click             Select / place on open water',
     'Drag on water     Size & aim terrain while placing',
+    'Vertex handles    Reshape selected terrain (dot = add,',
+    '                  drop onto neighbour = remove)',
     'Drag              Move selected (docks snap end-to-end)',
     '[  ]  or  Wheel    Rotate selected (5°)',
     'Shift + [ ] / Wheel  Rotate snap to 45°',
@@ -3322,6 +3598,7 @@ export function renderPresetThumb(p, size = 96) {
     cabin: p.cabin,
     beacon: p.beacon,
     mark: p.mark,
+    aid: p.aid,
     terrain: p.terrain,
     height: p.height,
   };

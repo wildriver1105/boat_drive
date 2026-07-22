@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { cleatWorld, anchorWorld } from './mooring.js';
+import { terrainElevationAt } from './entities.js';
 import { WAKE_MAX_POINTS } from './constants.js';
 
 // Wave field — kept in lock-step with the GLSL waveH() in the water material
@@ -294,13 +295,24 @@ export function createRenderer3D(canvas) {
     for (const e of world.entities) {
       seen.add(e.id);
       let rec = entityMeshes.get(e.id);
+      // Vertex-edited terrain rebuilds its mesh whenever the polygon changes.
+      if (rec && rec.polyRev !== (e.polyRev || 0)) {
+        scene.remove(rec.group);
+        disposeObject(rec.group);
+        entityMeshes.delete(e.id);
+        rec = null;
+      }
       if (!rec) {
         rec = makeEntityMesh(e);
+        rec.polyRev = e.polyRev || 0;
         entityMeshes.set(e.id, rec);
         scene.add(rec.group);
       }
       const bob = rec.floats ? waveHeight(e.x, e.y, world.time) : 0;
-      rec.group.position.set(e.x, rec.baseY + bob, e.y);
+      // Fixed aids (beacons / lighthouse / bollards) stand on whatever
+      // terrain is under them — breakwater crest, quay deck, island slope.
+      const lift = rec.elevate ? terrainElevationAt(world.entities, e.x, e.y) : 0;
+      rec.group.position.set(e.x, rec.baseY + bob + lift, e.y);
       rec.group.rotation.y = -e.heading;
     }
     for (const [id, rec] of entityMeshes) {
@@ -950,7 +962,7 @@ function makeEntityMesh(e) {
     );
     band.position.y = 0.6;
     group.add(band);
-    return { group, baseY: 0, floats: false };
+    return { group, baseY: 0, floats: false, elevate: true };
   }
 
   if (e.category === 'buoy' && e.beacon) {
@@ -987,7 +999,7 @@ function makeEntityMesh(e) {
     roof.position.y = topY + 1.5;
     roof.castShadow = true;
     group.add(roof);
-    return { group, baseY: 0, floats: false };
+    return { group, baseY: 0, floats: false, elevate: true };
   }
 
   if (e.category === 'buoy') {
@@ -1137,6 +1149,8 @@ function topCone(group, y, dir, mat = MARK3D.black) {
 }
 
 function makeMarkMesh(e, group) {
+  if (e.aid === 'beacon') return makeBeaconMesh(e, group);
+
   // Float drum at the waterline — common to every pillar mark.
   const float = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 0.45, 14), MAT.pontoon);
   float.position.y = 0.1;
@@ -1243,6 +1257,81 @@ function makeMarkMesh(e, group) {
   return { group, baseY: 0, floats: true };
 }
 
+// Beacon (입표): a FIXED tapered pile carrying the IALA daymark — no float,
+// no bob; may stand on terrain (the renderer lifts it to the ground height).
+function makeBeaconMesh(e, group) {
+  const pile = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, 3.2, 10), MAT.dark);
+  pile.position.y = 1.6;
+  pile.castShadow = true;
+  group.add(pile);
+
+  const m = e.mark;
+  const topY = 3.2;
+  let lightColor = '#ffffff';
+
+  if (m === 'lat-s') {
+    // Red triangular daymark (square pyramid reads as a triangle board).
+    const day = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.7, 4), MARK3D.red);
+    day.position.y = topY + 0.35;
+    day.castShadow = true;
+    group.add(day);
+    lightColor = '#ff5a46';
+  } else if (m === 'lat-p') {
+    // Green square daymark board.
+    const day = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.72, 0.1), MARK3D.green);
+    day.position.y = topY + 0.36;
+    day.castShadow = true;
+    group.add(day);
+    lightColor = '#4dff88';
+  } else if (m && m.startsWith('card-')) {
+    const dirn = m.slice(5);
+    const bands = {
+      n: [[MARK3D.yellow, 0.5], [MARK3D.black, 0.5]],
+      s: [[MARK3D.black, 0.5], [MARK3D.yellow, 0.5]],
+      e: [[MARK3D.black, 0.34], [MARK3D.yellow, 0.34], [MARK3D.black, 0.34]],
+      w: [[MARK3D.yellow, 0.34], [MARK3D.black, 0.34], [MARK3D.yellow, 0.34]],
+    }[dirn];
+    const top = bandStack(group, topY - 1.0, 0.22, bands);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.0, 6), MAT.chrome);
+    staff.position.y = top + 0.5;
+    group.add(staff);
+    const cones = { n: [1, 1], s: [-1, -1], e: [1, -1], w: [-1, 1] }[dirn];
+    topCone(group, top + 0.85, cones[0]);
+    topCone(group, top + 0.4, cones[1]);
+  } else if (m === 'danger') {
+    const top = bandStack(group, topY - 1.0, 0.22, [[MARK3D.black, 0.34], [MARK3D.red, 0.32], [MARK3D.black, 0.34]]);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 6), MAT.chrome);
+    staff.position.y = top + 0.4;
+    group.add(staff);
+    for (const dy of [0.3, 0.66]) {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), MARK3D.black);
+      ball.position.y = top + dy;
+      group.add(ball);
+    }
+  } else if (m === 'special') {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.8, 10), MARK3D.yellow);
+    band.position.y = topY - 0.4;
+    group.add(band);
+    for (const rx of [Math.PI / 4, -Math.PI / 4]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), MARK3D.yellow);
+      arm.position.y = topY + 0.3;
+      arm.rotation.x = rx;
+      group.add(arm);
+    }
+    lightColor = '#ffe45e';
+  }
+
+  const bbox = new THREE.Box3().setFromObject(group);
+  const light = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 6),
+    new THREE.MeshStandardMaterial({ color: lightColor, emissive: lightColor, emissiveIntensity: 0.8, roughness: 0.3 })
+  );
+  light.position.y = bbox.max.y + 0.12;
+  group.add(light);
+
+  return { group, baseY: 0, floats: false, elevate: true };
+}
+
 // ---------- Terrain (breakwater / quay / rock / island) ----------
 
 const TERRAIN3D = {
@@ -1264,10 +1353,212 @@ function tHash01(e, salt) {
   return ((h ^ (salt * 2654435761)) >>> 9) / 8388608 % 1;
 }
 
+// Most-interior point of a local-frame polygon (approximate pole of
+// inaccessibility): coarse grid sample, keep the inside point with the
+// largest distance to any edge. Falls back to the centroid.
+function poleOfInaccessibility(poly, cx, cy) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of poly) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  const n = poly.length;
+  const inside = (px, py) => {
+    let odd = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) odd = !odd;
+    }
+    return odd;
+  };
+  const distToEdges = (px, py) => {
+    let best = Infinity;
+    for (let i = 0; i < n; i++) {
+      const [ax, ay] = poly[i];
+      const [bx, by] = poly[(i + 1) % n];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy || 1e-9;
+      let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  const G = 14;
+  let bx = cx;
+  let by = cy;
+  let br = inside(cx, cy) ? distToEdges(cx, cy) : 0;
+  for (let i = 0; i < G; i++) {
+    for (let j = 0; j < G; j++) {
+      const px = minX + ((i + 0.5) / G) * (maxX - minX);
+      const py = minY + ((j + 0.5) / G) * (maxY - minY);
+      if (!inside(px, py)) continue;
+      const d = distToEdges(px, py);
+      if (d > br) {
+        br = d;
+        bx = px;
+        by = py;
+      }
+    }
+  }
+  return { x: bx, y: by, r: br };
+}
+
+// Local-frame polygon → THREE.Shape. 2D local y maps to 3D +z after the
+// rotateX(-π/2) below, so shape-y is negated here. `scale` shrinks/grows the
+// outline around its centroid (crest caps, sand skirts).
+function polyShape(poly, scale = 1) {
+  let cx = 0;
+  let cy = 0;
+  for (const [x, y] of poly) { cx += x; cy += y; }
+  cx /= poly.length;
+  cy /= poly.length;
+  const s = new THREE.Shape();
+  poly.forEach(([x, y], i) => {
+    const px = cx + (x - cx) * scale;
+    const py = -(cy + (y - cy) * scale);
+    if (i === 0) s.moveTo(px, py);
+    else s.lineTo(px, py);
+  });
+  s.closePath();
+  return s;
+}
+
+// Upright prism from a local polygon: base skirt bevel gives a battered
+// (sloped) face instead of a sheer wall.
+function extrudePoly(poly, depth, scale = 1, bevelSize = 0.9) {
+  const geo = new THREE.ExtrudeGeometry(polyShape(poly, scale), {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: 0.4,
+    bevelSize,
+    bevelSegments: 1,
+  });
+  geo.rotateX(-Math.PI / 2);
+  return geo;
+}
+
 function makeTerrainMesh(e, group) {
   const L = e.length;
   const W = e.width;
   const H = e.height || 3;
+  const poly = Array.isArray(e.poly) && e.poly.length >= 3 ? e.poly : null;
+
+  if (poly) {
+    // ---- Vertex-edited terrain: extruded from the drawn polygon ----
+    let cx = 0;
+    let cy = 0;
+    for (const [x, y] of poly) { cx += x; cy += y; }
+    cx /= poly.length;
+    cy /= poly.length;
+
+    if (e.terrain === 'breakwater' || e.terrain === 'quay') {
+      const isQuay = e.terrain === 'quay';
+      const depth = isQuay ? H + 1.4 : H * 0.62 + 0.8;
+      const body = new THREE.Mesh(
+        extrudePoly(poly, depth, 1, isQuay ? 0.25 : 1.1),
+        isQuay ? TERRAIN3D.concrete : TERRAIN3D.armour
+      );
+      body.position.y = isQuay ? -1.4 : -0.8;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+      const cap = new THREE.Mesh(
+        extrudePoly(poly, 0.25, isQuay ? 0.94 : 0.5, 0.1),
+        isQuay ? TERRAIN3D.concreteLight : TERRAIN3D.concrete
+      );
+      cap.position.y = isQuay ? H : H * 0.62;
+      cap.receiveShadow = true;
+      group.add(cap);
+      // Bollards (quay) / armour blocks (breakwater) at the vertices.
+      for (let i = 0; i < poly.length; i++) {
+        const [vx, vy] = poly[i];
+        if (isQuay) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.4, 10), MAT.dark);
+          post.position.set(cx + (vx - cx) * 0.88, H + 0.2, cy + (vy - cy) * 0.88);
+          post.castShadow = true;
+          group.add(post);
+        } else {
+          const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9, 0), TERRAIN3D.armour);
+          b.position.set(vx, 0.2 + tHash01(e, i * 7) * 0.4, vy);
+          b.rotation.set(tHash01(e, i * 3) * 3, tHash01(e, i * 5) * 3, 0);
+          const sc = 0.7 + tHash01(e, i * 11) * 0.6;
+          b.scale.set(sc, sc * 0.8, sc);
+          b.castShadow = true;
+          group.add(b);
+        }
+      }
+      return { group, baseY: 0, floats: false };
+    }
+
+    if (e.terrain === 'rock') {
+      const body = new THREE.Mesh(extrudePoly(poly, H * 0.7, 1, 0.5), TERRAIN3D.rock);
+      body.position.y = -0.3;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+      for (let i = 0; i < poly.length; i += 2) {
+        const [vx, vy] = poly[i];
+        const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0), TERRAIN3D.rock);
+        const sc = 0.5 + tHash01(e, i * 13) * 1.0;
+        b.scale.set(sc, sc * (0.6 + tHash01(e, i * 17) * 0.5), sc);
+        b.position.set(vx * 0.8, H * 0.45, vy * 0.8);
+        b.castShadow = true;
+        group.add(b);
+      }
+      return { group, baseY: 0, floats: false };
+    }
+
+    // Island / headland from the polygon: sand skirt + grassy base + hills.
+    const skirt = new THREE.Mesh(extrudePoly(poly, 0.7, 1.08, 0.8), TERRAIN3D.sand);
+    skirt.position.y = -0.15;
+    skirt.receiveShadow = true;
+    group.add(skirt);
+    const land = new THREE.Mesh(extrudePoly(poly, 1.5, 1, 0.4), TERRAIN3D.grass);
+    land.position.y = 0;
+    land.castShadow = true;
+    land.receiveShadow = true;
+    group.add(land);
+    // Put the hill at the polygon's most-interior point (largest distance to
+    // the coast) — the centroid of a concave island can sit over open water,
+    // which left the cones hovering over the bay. Size everything from that
+    // interior clearance so the hill always stands on land.
+    const pole = poleOfInaccessibility(poly, cx, cy);
+    const R = Math.max(2.5, pole.r);
+    const effH = Math.min(H, R * 2.0);
+    const lower = new THREE.Mesh(new THREE.ConeGeometry(1, effH * 0.62, 16), TERRAIN3D.grass);
+    lower.scale.set(R * 1.05, 1, R * 1.05);
+    lower.position.set(pole.x, effH * 0.31 + 1.4, pole.y);
+    lower.castShadow = true;
+    lower.receiveShadow = true;
+    group.add(lower);
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(1, effH * 0.5, 14), TERRAIN3D.grassDark);
+    peak.scale.set(R * 0.55, 1, R * 0.55);
+    peak.position.set(
+      pole.x + (tHash01(e, 91) - 0.5) * R * 0.2,
+      effH * 0.6 + 1.2,
+      pole.y + (tHash01(e, 92) - 0.5) * R * 0.2
+    );
+    peak.castShadow = true;
+    group.add(peak);
+    for (let i = 0; i < poly.length; i += 2) {
+      const [vx, vy] = poly[i];
+      const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0), TERRAIN3D.rock);
+      b.scale.setScalar(0.7 + tHash01(e, 70 + i) * 1.2);
+      b.position.set(vx * 0.97, 0.3, vy * 0.97);
+      b.castShadow = true;
+      group.add(b);
+    }
+    return { group, baseY: 0, floats: false };
+  }
 
   if (e.terrain === 'breakwater') {
     // Rubble mound (trapezoid cross-section extruded along the length) with

@@ -98,6 +98,35 @@ function collectBodies(world) {
       !Number.isFinite(e.length) || e.length <= 0 ||
       !Number.isFinite(e.width) || e.width <= 0
     ) continue;
+    // Vertex-edited terrain: the polygon may be CONCAVE, which plain SAT
+    // can't resolve. Collide against the COASTLINE instead — one thin static
+    // OBB per polygon edge. Bays and headlands then behave correctly.
+    if (e.category === 'terrain' && Array.isArray(e.poly) && e.poly.length >= 3) {
+      const cosH = Math.cos(e.heading);
+      const sinH = Math.sin(e.heading);
+      const n = e.poly.length;
+      for (let i = 0; i < n; i++) {
+        const [ax, ay] = e.poly[i];
+        const [bx, by] = e.poly[(i + 1) % n];
+        const mx = (ax + bx) / 2;
+        const my = (ay + by) / 2;
+        const wx = e.x + mx * cosH - my * sinH;
+        const wy = e.y + mx * sinH + my * cosH;
+        const edgeLen = Math.hypot(bx - ax, by - ay);
+        if (edgeLen < 0.05) continue;
+        const edgeHeading = e.heading + Math.atan2(by - ay, bx - ax);
+        bodies.push({
+          obj: { x: wx, y: wy, heading: edgeHeading, vx: 0, vy: 0, omega: 0 },
+          L: edgeLen,
+          W: 0.9,
+          invM: 0,
+          invI: 0,
+          isStatic: true,
+          isEntity: false,
+        });
+      }
+      continue;
+    }
     // Docks AND buoys are static — anchored, infinite mass, never pushed.
     const isStatic = e.category !== 'boat';
     if (!isStatic) {
