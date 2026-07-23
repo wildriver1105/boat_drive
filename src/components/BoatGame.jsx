@@ -9,6 +9,14 @@ import { createLoop } from '@/game/loop';
 import { ENTITY_PRESETS } from '@/game/entities';
 import { buildSampleHarbor } from '@/game/sample-harbor';
 import { lineState, adjustMooringLength, removeMooringLine } from '@/game/mooring';
+import {
+  listSavedMaps,
+  saveMapToLibrary,
+  loadMapFromLibrary,
+  deleteSavedMap,
+  downloadMapFile,
+  parseMapText,
+} from '@/game/map-io';
 
 const KN_TO_MS = 0.514444;
 
@@ -18,6 +26,7 @@ export default function BoatGame() {
   const worldRef = useRef(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showMaps, setShowMaps] = useState(false);
   const [windSpeedKn, setWindSpeedKn] = useState(0);
   const [windFromDeg, setWindFromDeg] = useState(0);
   const [massScale, setMassScale] = useState(1);
@@ -259,33 +268,108 @@ export default function BoatGame() {
     }
   }
 
-  // Replace the map with the bundled sample training harbor.
-  function loadSampleHarbor() {
+  // Replace the whole map with a fresh set of entities (shared by the sample
+  // harbor and by map load / import). `confirmMsg` guards against clobbering a
+  // non-empty map; pass null to skip the prompt.
+  function applyEntities(entities, confirmMsg) {
     const world = worldRef.current;
-    if (!world) return;
-    if (world.entities.length > 0) {
+    if (!world) return false;
+    if (confirmMsg && world.entities.length > 0) {
       // eslint-disable-next-line no-alert
-      if (!window.confirm('Replace the current map with the sample harbor?')) return;
+      if (!window.confirm(confirmMsg)) return false;
     }
     world.entities.length = 0;
-    world.entities.push(...buildSampleHarbor());
+    world.entities.push(...entities);
     world.edit.selectedId = null;
     setSelectedEntity(null);
-    // Park the editor camera over the harbour entrance.
     world.camera.x = 0;
-    world.camera.y = -20;
+    world.camera.y = 0;
     saveWorld(world);
+    return true;
   }
 
-  // ESC closes the modal.
+  // Replace the map with the bundled sample training harbor.
+  function loadSampleHarbor() {
+    if (applyEntities(buildSampleHarbor(), 'Replace the current map with the sample harbor?')) {
+      const world = worldRef.current;
+      if (world) world.camera.y = -20; // park over the harbour entrance
+    }
+  }
+
+  // ---- Map library / file I/O ----
+  const [mapList, setMapList] = useState([]);
+  const [mapName, setMapName] = useState('');
+  const [mapError, setMapError] = useState('');
+  const fileInputRef = useRef(null);
+
+  function refreshMapList() {
+    setMapList(listSavedMaps());
+  }
+  // Reload the slot list whenever the manager opens.
   useEffect(() => {
-    if (!showSettings) return;
+    if (showMaps) {
+      refreshMapList();
+      setMapError('');
+    }
+  }, [showMaps]);
+
+  function handleSaveMap() {
+    const world = worldRef.current;
+    if (!world) return;
+    const name = (mapName || '').trim() || `Map ${new Date().toLocaleString()}`;
+    saveMapToLibrary(world, name, new Date().toISOString());
+    setMapName('');
+    refreshMapList();
+  }
+  function handleLoadMap(id) {
+    const entities = loadMapFromLibrary(id);
+    if (!entities) return;
+    if (applyEntities(entities, 'Replace the current map with this saved map?')) {
+      setShowMaps(false);
+    }
+  }
+  function handleDeleteMap(id) {
+    deleteSavedMap(id);
+    refreshMapList();
+  }
+  function handleExportMap() {
+    const world = worldRef.current;
+    if (!world) return;
+    const base = (mapName || 'harbor-map').trim().replace(/[^\w.-]+/g, '_') || 'harbor-map';
+    downloadMapFile(world, `${base}.json`);
+  }
+  function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // allow re-importing the same file
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const entities = parseMapText(String(reader.result));
+        if (applyEntities(entities, 'Replace the current map with the imported file?')) {
+          setMapError('');
+          setShowMaps(false);
+        }
+      } catch (err) {
+        setMapError('Could not read that file: ' + (err && err.message ? err.message : 'invalid JSON'));
+      }
+    };
+    reader.onerror = () => setMapError('Could not read that file.');
+    reader.readAsText(file);
+  }
+
+  // ESC closes the modals.
+  useEffect(() => {
+    if (!showSettings && !showMaps) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') setShowSettings(false);
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        setShowMaps(false);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings]);
+  }, [showSettings, showMaps]);
 
   // Global "M" (map) toggles edit mode — "E" is taken by the bow thruster.
   useEffect(() => {
@@ -326,6 +410,15 @@ export default function BoatGame() {
             title="Tracking mode — record the racing line"
           >
             ◉
+          </button>
+          <button
+            type="button"
+            className="hud-btn maps-btn"
+            onClick={() => setShowMaps(true)}
+            aria-label="Open map manager"
+            title="Maps — save / load / export"
+          >
+            🗺
           </button>
           <button
             type="button"
@@ -440,6 +533,7 @@ export default function BoatGame() {
           onRotate={rotateSelectedBy}
           onDelete={deleteSelected}
           onLoadSample={loadSampleHarbor}
+          onOpenMaps={() => setShowMaps(true)}
           onExit={() => setEditMode(false)}
           onClearAll={() => {
             const world = worldRef.current;
@@ -470,7 +564,150 @@ export default function BoatGame() {
           onClose={() => setShowSettings(false)}
         />
       )}
+
+      {showMaps && (
+        <MapsModal
+          maps={mapList}
+          name={mapName}
+          error={mapError}
+          entityCount={worldRef.current ? worldRef.current.entities.length : 0}
+          onName={setMapName}
+          onSave={handleSaveMap}
+          onLoad={handleLoadMap}
+          onDelete={handleDeleteMap}
+          onExport={handleExportMap}
+          onImport={() => fileInputRef.current && fileInputRef.current.click()}
+          onClose={() => setShowMaps(false)}
+        />
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: 'none' }}
+        onChange={handleImportFile}
+      />
     </>
+  );
+}
+
+function MapsModal({
+  maps,
+  name,
+  error,
+  entityCount,
+  onName,
+  onSave,
+  onLoad,
+  onDelete,
+  onExport,
+  onImport,
+  onClose,
+}) {
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString();
+    } catch (e) {
+      return iso;
+    }
+  };
+  return (
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="maps-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal-card">
+        <div className="modal-header">
+          <h2 id="maps-title">Maps</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="modal-body">
+          <section className="setting-group">
+            <header className="group-header">
+              <span className="group-title">Current map</span>
+              <span className="muted" style={{ fontSize: 12 }}>
+                {entityCount} item{entityCount === 1 ? '' : 's'}
+              </span>
+            </header>
+            <div className="maps-save-row">
+              <input
+                type="text"
+                className="maps-name"
+                placeholder="Map name…"
+                value={name}
+                onChange={(e) => onName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onSave();
+                }}
+              />
+              <button type="button" className="tool-btn primary" onClick={onSave}>
+                Save
+              </button>
+            </div>
+            <div className="maps-io-row">
+              <button type="button" className="tool-btn" onClick={onExport} title="Download the current map as a .json file">
+                ⬇ Export file
+              </button>
+              <button type="button" className="tool-btn" onClick={onImport} title="Load a map from a .json file on this device">
+                ⬆ Import file
+              </button>
+            </div>
+            <p className="maps-note">
+              Coordinates are Cartesian metres — origin (0, 0) is the boat’s start point,
+              +x east, +y north.
+            </p>
+            {error ? <p className="maps-error">{error}</p> : null}
+          </section>
+
+          <section className="setting-group">
+            <header className="group-header">
+              <span className="group-title">Saved on this device</span>
+            </header>
+            {maps.length === 0 ? (
+              <div className="maps-empty">No saved maps yet.</div>
+            ) : (
+              <ul className="maps-list">
+                {maps.map((m) => (
+                  <li className="maps-item" key={m.id}>
+                    <div className="maps-item-info">
+                      <span className="maps-item-name">{m.name}</span>
+                      <span className="maps-item-meta">
+                        {m.count} item{m.count === 1 ? '' : 's'} · {fmtDate(m.savedAt)}
+                      </span>
+                    </div>
+                    <button type="button" className="tool-btn" onClick={() => onLoad(m.id)}>
+                      Load
+                    </button>
+                    <button
+                      type="button"
+                      className="tool-btn danger"
+                      onClick={() => onDelete(m.id)}
+                      aria-label={`Delete ${m.name}`}
+                      title="Delete"
+                    >
+                      🗑
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="primary-btn" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -580,7 +817,7 @@ function AssetPalette({ tool, onTool }) {
   );
 }
 
-function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSample, onExit, onClearAll }) {
+function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSample, onOpenMaps, onExit, onClearAll }) {
   const sel = !!selected;
   return (
     <>
@@ -596,6 +833,9 @@ function EditorToolbar({ tool, onTool, selected, onRotate, onDelete, onLoadSampl
           <span aria-hidden="true">↖</span> Select
         </button>
         <span className="tool-spacer" />
+        <button type="button" className="tool-btn" onClick={onOpenMaps} title="Save / load / export the map">
+          🗺 Maps
+        </button>
         <button type="button" className="tool-btn" onClick={onLoadSample} title="Load the bundled sample training harbor (replaces the map)">
           ⚓ Sample harbor
         </button>
